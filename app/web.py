@@ -142,7 +142,11 @@ PROVIDER_ENV_FIELDS: dict[str, list[dict]] = {
             "type": "select",
             "options": ["amazon.de", "amazon.com"],
         },
-        {"key": "AMAZON_MONTHS_BACK", "label": "Monate zurück", "type": "number"},
+        {
+            "key": "AMAZON_START_YEAR",
+            "label": "Startjahr (z.B. 2015)",
+            "type": "number",
+        },
         {"key": "AMAZON_OTP_CODE", "label": "2FA OTP (einmalig)", "type": "text"},
     ],
 }

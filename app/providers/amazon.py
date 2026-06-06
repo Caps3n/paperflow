@@ -193,14 +193,13 @@ class AmazonProvider(BaseProvider):
     def _get_invoice_map(self, page: Page) -> dict[str, str]:
         """
         Iteriert durch alle Jahre seit AMAZON_START_YEAR und sammelt pro Bestellung
-        den direkten PDF-Link aus dem "Rechnung ▼" Dropdown.
-        Gibt {order_id: pdf_url} zurück.
+        den direkten PDF-Link.
 
-        Amazon-URL-Parameter (verifiziert durch Inspektion auf amazon.de):
-          ?timeFilter=year-2024  (nicht orderFilter!)
-          ?timeFilter=months-3
-          ?timeFilter=last30
-        Für eine vollständige Historie wird Jahr für Jahr abgefragt.
+        Verifiziert auf amazon.de:
+          - URL-Parameter: ?timeFilter=year-2024  (NICHT orderFilter!)
+          - "Rechnung" Link führt zu /your-orders/invoice/popover?orderId=...
+          - Der Popover-Endpunkt liefert HTML mit dem echten documents/download Link
+          - Wird direkt per fetch() geholt – kein Popup-Klick nötig
         """
         import datetime
 
@@ -225,13 +224,13 @@ class AmazonProvider(BaseProvider):
         self, page: Page, time_filter: str, result: dict[str, str]
     ) -> int:
         """
-        Lädt eine gefilterte Bestellliste und sammelt alle PDF-Links durch
-        Klick auf "Rechnung ▼" Dropdowns. Paginiert automatisch.
-        Gibt die Anzahl neu gefundener Rechnungen zurück.
+        Lädt eine gefilterte Bestellliste, liest alle Popover-URLs aus dem DOM
+        und holt per fetch() direkt die PDF-Links – ohne Popup-Klick.
+        Paginiert automatisch. Gibt die Anzahl neu gefundener Rechnungen zurück.
         """
         url = f"{self.urls['orders']}?timeFilter={time_filter}"
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        time.sleep(3)
+        time.sleep(2)
 
         found_new = 0
         page_num = 0
@@ -239,58 +238,72 @@ class AmazonProvider(BaseProvider):
         while True:
             page_num += 1
 
-            triggers = page.locator(
-                "span.a-declarative:has-text('Rechnung'), "
-                ".order-header__header-list-item:has-text('Rechnung') .a-declarative"
+            # Sammle alle Popover-URLs + Bestellnummern in einem JS-Call
+            # Jede Bestellung hat einen a[href*='invoice/popover'] Link
+            items = page.evaluate(
+                """() => {
+                    const results = [];
+                    const links = document.querySelectorAll('a[href*="invoice/popover"]');
+                    for (const a of links) {
+                        // Bestellnummer aus der umgebenden Karte
+                        const card = a.closest(
+                            '.order-card, [class*="order-card"], .a-box-group, ' +
+                            '.order-header, [class*="order"]'
+                        );
+                        const html = card ? card.innerHTML : document.body.innerHTML;
+                        const m = html.match(/\\d{3}-\\d{7}-\\d{7}/);
+                        if (m) {
+                            results.push({ orderId: m[0], popoverUrl: a.href });
+                        }
+                    }
+                    return results;
+                }"""
             )
-            count = triggers.count()
 
-            if count == 0:
+            if not items:
                 logger.debug(
-                    "Keine Rechnung-Buttons auf Seite %d (%s)", page_num, time_filter
+                    "Keine Bestellungen auf Seite %d (%s)", page_num, time_filter
                 )
                 break
 
-            for i in range(count):
-                try:
-                    trigger = triggers.nth(i)
+            logger.debug(
+                "%d Bestellungen auf Seite %d (%s)", len(items), page_num, time_filter
+            )
 
-                    # Bestellnummer aus der umgebenden Bestellkarte lesen
-                    order_id = page.evaluate(
-                        """el => {
-                            const card = el.closest('.order-card, [class*="order-card"], .a-box-group');
-                            const m = card ? card.innerHTML.match(/\\d{3}-\\d{7}-\\d{7}/) : null;
-                            return m ? m[0] : null;
-                        }""",
-                        trigger.element_handle(),
+            for item in items:
+                order_id = (
+                    item["order_id"] if "order_id" in item else item.get("orderId")
+                )
+                popover_url = item.get("popoverUrl") or item.get("popover_url")
+
+                if not order_id or order_id in result:
+                    continue
+
+                # PDF-Link via fetch() aus dem Popover-HTML holen
+                pdf_url = page.evaluate(
+                    """async (url) => {
+                        try {
+                            const resp = await fetch(url, { credentials: 'include' });
+                            const html = await resp.text();
+                            const m = html.match(
+                                /href="([^"]*documents\\/download[^"]*invoice\\.pdf[^"]*)"/
+                            );
+                            return m ? m[1] : null;
+                        } catch(e) {
+                            return null;
+                        }
+                    }""",
+                    popover_url,
+                )
+
+                if pdf_url:
+                    result[order_id] = pdf_url
+                    found_new += 1
+                    logger.debug("PDF: %s → %s", order_id, pdf_url[:60])
+                else:
+                    logger.debug(
+                        "Kein PDF für %s (kein Rechnungs-Link im Popover)", order_id
                     )
-
-                    if not order_id or order_id in result:
-                        continue
-
-                    # Dropdown öffnen
-                    trigger.click()
-                    time.sleep(0.8)
-
-                    # Direkte PDF-URL aus dem Dropdown lesen
-                    pdf_link = page.locator(
-                        "a[href*='documents/download'][href*='invoice.pdf']"
-                    ).first
-                    if pdf_link.is_visible(timeout=2000):
-                        href = pdf_link.get_attribute("href")
-                        if href:
-                            result[order_id] = href
-                            found_new += 1
-                            logger.debug("PDF: %s → %s", order_id, href[:60])
-
-                    # Dropdown schließen
-                    page.keyboard.press("Escape")
-                    time.sleep(0.3)
-
-                except Exception as e:
-                    logger.debug("Fehler bei Trigger %d: %s", i, e)
-                    page.keyboard.press("Escape")
-                    time.sleep(0.3)
 
             # Nächste Seite?
             next_btn = page.locator("ul.a-pagination li.a-last a")
