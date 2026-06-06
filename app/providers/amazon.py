@@ -67,7 +67,14 @@ class AmazonProvider(BaseProvider):
         invoices: list[Invoice] = []
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                ],
+            )
             context = self._create_context(browser)
             page = context.new_page()
 
@@ -107,6 +114,11 @@ class AmazonProvider(BaseProvider):
             ),
             accept_downloads=True,
             locale="de-DE",
+            viewport={"width": 1280, "height": 900},
+        )
+        # Webdriver-Flag entfernen damit Amazon uns nicht als Bot erkennt
+        context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
         if COOKIES_FILE.exists():
             try:
@@ -158,6 +170,9 @@ class AmazonProvider(BaseProvider):
             )
             time.sleep(1)
 
+            logger.info("Login-Seite geladen: %s", page.url[-80:])
+            # Warte explizit auf das E-Mail-Feld
+            page.wait_for_selector("#ap_email", timeout=15000)
             page.locator("#ap_email").fill(self.email)
             page.locator("#continue").click()
             time.sleep(1)
