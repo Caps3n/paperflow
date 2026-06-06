@@ -27,7 +27,8 @@ from app.paperless_client import PaperlessClient
 from app.providers import BaseProvider, Invoice
 from app.version import __version__
 
-# .env laden – zuerst aus /app/config/.env (via Web-UI gespeichert), dann Fallback
+# .env laden – zuerst aus /app/data/settings.env, Fallback auf /app/config/.env
+load_dotenv(Path("/app/data/settings.env"))
 load_dotenv(Path("/app/config/.env"))
 load_dotenv()  # lokale .env für Entwicklung
 
@@ -46,7 +47,8 @@ _stream_handler.setFormatter(_fmt)
 logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _stream_handler])
 logger = logging.getLogger("main")
 
-CONFIG_PATH = Path("/app/config/providers.yml")
+CONFIG_PATH = Path("/app/data/providers.yml")
+_CONFIG_LEGACY = Path("/app/config/providers.yml")
 CUSTOM_PROVIDERS_DIR = Path("/app/providers_custom")
 
 
@@ -96,12 +98,13 @@ def run_once() -> None:
     logger.info("Starte Rechnungs-Fetch...")
     logger.info("=" * 60)
 
-    # Config laden
-    if not CONFIG_PATH.exists():
+    # Config laden – neue Stelle bevorzugt, Fallback auf alte
+    cfg_path = CONFIG_PATH if CONFIG_PATH.exists() else _CONFIG_LEGACY
+    if not cfg_path.exists():
         logger.error("Keine Konfiguration gefunden: %s", CONFIG_PATH)
         return
 
-    with open(CONFIG_PATH) as f:
+    with open(cfg_path) as f:
         config = yaml.safe_load(f)
 
     # Paperless-NGX Verbindung prüfen
