@@ -163,16 +163,20 @@ class AmazonProvider(BaseProvider):
 
     def _do_login(self, page: Page) -> bool:
         try:
-            page.goto(
-                f"{self.urls['login']}?returnTo={self.urls['orders']}",
-                wait_until="domcontentloaded",
-                timeout=30000,
-            )
-            time.sleep(1)
+            # Zur Bestellseite – Amazon leitet selbst zur Login-Seite weiter
+            # (mit allen nötigen OpenID-Parametern)
+            page.goto(self.urls["orders"], wait_until="domcontentloaded", timeout=30000)
+            time.sleep(2)
 
-            logger.info("Login-Seite geladen: %s", page.url[-80:])
-            # Warte explizit auf das E-Mail-Feld
-            page.wait_for_selector("#ap_email", timeout=15000)
+            # Falls noch nicht auf Login-Seite, direkt zur signin-Seite
+            if not self._is_login_page(page):
+                logger.info("Bereits eingeloggt nach _do_login – kein Login nötig")
+                return True
+
+            logger.info("Login-Seite: %s", page.url[-100:])
+
+            # Warte auf E-Mail-Feld (Amazon Login Step 1)
+            page.wait_for_selector("#ap_email", timeout=20000)
             page.locator("#ap_email").fill(self.email)
             page.locator("#continue").click()
             time.sleep(1)
