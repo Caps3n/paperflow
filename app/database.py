@@ -98,6 +98,47 @@ def mark_failed(provider: str, invoice_id: str, reason: str) -> None:
         conn.commit()
 
 
+def get_all_invoices(
+    limit: int = 500,
+    status: str | None = None,
+    provider: str | None = None,
+) -> list[dict]:
+    """Gibt alle Rechnungen zurück (für Verlauf-Seite)."""
+    query = "SELECT * FROM invoices WHERE 1=1"
+    params: list = []
+    if status:
+        query += " AND status=?"
+        params.append(status)
+    if provider:
+        query += " AND provider=?"
+        params.append(provider)
+    query += " ORDER BY updated_at DESC LIMIT ?"
+    params.append(limit)
+    with get_connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_invoice(db_id: int) -> bool:
+    """Löscht einen Eintrag aus der Datenbank (wird beim nächsten Lauf neu verarbeitet)."""
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM invoices WHERE id=?", (db_id,))
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def reset_invoice(db_id: int) -> bool:
+    """Setzt einen Eintrag auf 'pending' zurück (erneuter Upload-Versuch)."""
+    now = datetime.utcnow().isoformat()
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE invoices SET status='pending', paperless_id=NULL, updated_at=? WHERE id=?",
+            (now, db_id),
+        )
+        conn.commit()
+    return cur.rowcount > 0
+
+
 def get_stats() -> dict:
     """Gibt eine Übersicht über alle Rechnungen zurück."""
     with get_connection() as conn:

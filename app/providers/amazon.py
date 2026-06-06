@@ -18,6 +18,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
 
+from app import otp_state
 from app.providers import BaseProvider, Invoice
 
 logger = logging.getLogger("provider.amazon")
@@ -147,20 +148,25 @@ class AmazonProvider(BaseProvider):
             page.locator("#signInSubmit").click()
             time.sleep(3)
 
-            # 2FA / OTP Check
+            # 2FA / OTP Check (SMS oder App)
             if page.locator("#auth-mfa-otpcode").is_visible():
-                logger.warning(
-                    "⚠️  Amazon verlangt 2FA (OTP). "
-                    "Bitte setze AMAZON_OTP_CODE in der .env oder nutze "
-                    "ein App-Passwort. Für den ersten Login: headless=False setzen."
-                )
-                # Warte auf OTP aus Umgebungsvariable
+                # Zuerst aus Umgebungsvariable versuchen, sonst Web-UI abwarten
                 otp = os.environ.get("AMAZON_OTP_CODE", "")
+                if not otp:
+                    logger.warning(
+                        "⚠️  Amazon verlangt 2FA – warte auf SMS-Code über Web-UI (5 Min)..."
+                    )
+                    otp = otp_state.request_otp(timeout=300)
                 if otp:
                     page.locator("#auth-mfa-otpcode").fill(otp)
+                    # "Dieses Gerät merken" anklicken damit Cookies dauerhaft gelten
+                    remember = page.locator("#auth-rememberme-checkbox")
+                    if remember.is_visible():
+                        remember.check()
                     page.locator("#auth-signin-button").click()
                     time.sleep(3)
                 else:
+                    logger.error("Kein OTP eingegeben – Login abgebrochen")
                     return False
 
             # Prüfe ob Login erfolgreich

@@ -121,6 +121,15 @@
   .spacer { flex: 1; }
   .tag { background: var(--surface2); border: 1px solid var(--border); border-radius: 5px; padding: 2px 8px; font-size: 11px; color: var(--muted); }
 
+  /* History table */
+  #history-table tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; }
+  #history-table tbody tr:last-child { border-bottom: none; }
+  #history-table tbody tr:hover { background: var(--surface2); }
+  #history-table td { padding: 11px 16px; font-size: 13px; }
+  .status-uploaded { color: var(--green); }
+  .status-failed { color: var(--red); }
+  .status-pending { color: var(--yellow); }
+
   /* Template hint */
   .code-block { background: #0a0c14; border: 1px solid var(--border); border-radius: 8px; padding: 16px; font-family: monospace; font-size: 12px; line-height: 1.7; color: #a5b4fc; overflow-x: auto; white-space: pre; margin-top: 12px; }
 </style>
@@ -135,6 +144,7 @@
       <a class="active" data-page="dashboard"><span class="icon">📊</span>Dashboard</a>
       <a data-page="settings"><span class="icon">⚙️</span>Einstellungen</a>
       <a data-page="providers"><span class="icon">🔌</span>Provider</a>
+      <a data-page="history"><span class="icon">🗂️</span>Verlauf</a>
       <a data-page="logs"><span class="icon">📋</span>Logs</a>
     </nav>
   </div>
@@ -218,6 +228,44 @@ class MeinproviderProvider(BaseProvider):
       </div>
     </div>
 
+    <!-- ── VERLAUF ── -->
+    <div class="page" id="page-history">
+      <h1>Verlauf</h1>
+      <p class="subtitle">Alle verarbeiteten Rechnungen – löschen setzt den Eintrag zurück</p>
+
+      <div class="row" style="margin-bottom:16px;gap:8px">
+        <select id="history-filter-status" style="width:auto;padding:7px 12px">
+          <option value="">Alle Status</option>
+          <option value="uploaded">✅ Hochgeladen</option>
+          <option value="failed">❌ Fehlgeschlagen</option>
+          <option value="pending">⏳ Ausstehend</option>
+        </select>
+        <select id="history-filter-provider" style="width:auto;padding:7px 12px">
+          <option value="">Alle Provider</option>
+          <option value="amazon">Amazon</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" onclick="loadHistory()">🔄 Aktualisieren</button>
+        <span id="history-count" style="color:var(--muted);font-size:12px;margin-left:4px"></span>
+      </div>
+
+      <div class="card" style="padding:0;overflow:hidden">
+        <table style="width:100%;border-collapse:collapse" id="history-table">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">
+              <th style="padding:12px 16px;text-align:left;font-weight:600">Provider</th>
+              <th style="padding:12px 16px;text-align:left;font-weight:600">Bestell-ID</th>
+              <th style="padding:12px 16px;text-align:left;font-weight:600">Status</th>
+              <th style="padding:12px 16px;text-align:left;font-weight:600">Datum</th>
+              <th style="padding:12px 16px;text-align:right;font-weight:600">Aktionen</th>
+            </tr>
+          </thead>
+          <tbody id="history-body">
+            <tr><td colspan="5" style="padding:40px;text-align:center;color:var(--muted)">Lade…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- ── LOGS ── -->
     <div class="page" id="page-logs">
       <h1>Logs</h1>
@@ -238,6 +286,19 @@ class MeinproviderProvider(BaseProvider):
 
 <div id="toast"></div>
 
+<!-- OTP Modal -->
+<div id="otp-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;display:none;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:32px;width:340px;text-align:center">
+    <div style="font-size:28px;margin-bottom:12px">📱</div>
+    <div style="font-size:16px;font-weight:700;margin-bottom:6px">SMS-Code eingeben</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Amazon hat dir einen Code per SMS geschickt. Bitte gib ihn hier ein.</div>
+    <input id="otp-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="8"
+           placeholder="z.B. 123456"
+           style="text-align:center;font-size:22px;letter-spacing:6px;padding:12px;margin-bottom:16px">
+    <button class="btn btn-primary" style="width:100%" onclick="submitOtp()">✓ Bestätigen</button>
+  </div>
+</div>
+
 <script>
 // ── Navigation ─────────────────────────────────────────────────
 document.querySelectorAll("nav a").forEach(a => {
@@ -250,6 +311,7 @@ document.querySelectorAll("nav a").forEach(a => {
     if (a.dataset.page === "settings") loadSettings();
     if (a.dataset.page === "logs") loadLogs();
     if (a.dataset.page === "dashboard") loadStats();
+    if (a.dataset.page === "history") loadHistory();
   });
 });
 
@@ -522,6 +584,99 @@ document.getElementById("auto-refresh-toggle").addEventListener("change", e => {
   else { clearInterval(logInterval); }
 });
 logInterval = setInterval(loadLogs, 3000);
+
+// ── VERLAUF ────────────────────────────────────────────────────
+let paperlessUrl = "";
+api("GET", "/api/settings").then(d => { paperlessUrl = (d.values?.PAPERLESS_URL || "").replace(/\/$/, ""); }).catch(()=>{});
+
+const STATUS_LABEL = { uploaded: "✅ Hochgeladen", failed: "❌ Fehler", pending: "⏳ Ausstehend" };
+
+async function loadHistory() {
+  const status = document.getElementById("history-filter-status").value;
+  const provider = document.getElementById("history-filter-provider").value;
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (provider) params.set("provider", provider);
+  const { invoices } = await api("GET", `/api/history?${params}`);
+  document.getElementById("history-count").textContent = `${invoices.length} Einträge`;
+  const tbody = document.getElementById("history-body");
+  if (!invoices.length) {
+    tbody.innerHTML = `<tr><td colspan="5" style="padding:40px;text-align:center;color:var(--muted)">Keine Einträge gefunden</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = invoices.map(inv => {
+    const date = inv.updated_at ? inv.updated_at.replace("T", " ").slice(0, 16) : "–";
+    const statusCls = `status-${inv.status}`;
+    const statusLabel = STATUS_LABEL[inv.status] || inv.status;
+    const paperlessLink = inv.paperless_id && paperlessUrl
+      ? `<a href="${paperlessUrl}/documents/${inv.paperless_id}/" target="_blank" style="color:var(--accent);font-size:11px;margin-left:6px" title="In Paperless öffnen">↗</a>`
+      : "";
+    const retryBtn = inv.status !== "uploaded"
+      ? `<button class="btn btn-ghost btn-sm" onclick="retryInvoice(${inv.id})" title="Erneut versuchen">🔄</button>`
+      : "";
+    return `<tr>
+      <td><span style="font-size:16px">${PROVIDER_ICONS[inv.provider]||"📦"}</span> ${inv.provider}</td>
+      <td style="font-family:monospace;font-size:12px">${inv.invoice_id}</td>
+      <td><span class="${statusCls}">${statusLabel}</span>${paperlessLink}</td>
+      <td style="color:var(--muted)">${date}</td>
+      <td style="text-align:right;display:flex;gap:6px;justify-content:flex-end">
+        ${retryBtn}
+        <button class="btn btn-danger btn-sm" onclick="deleteInvoice(${inv.id},'${inv.invoice_id}')" title="Löschen (wird neu verarbeitet)">🗑</button>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+async function deleteInvoice(id, label) {
+  if (!confirm(`Eintrag "${label}" löschen?\nDie Rechnung wird beim nächsten Lauf neu verarbeitet.`)) return;
+  try {
+    await api("DELETE", `/api/history/${id}`);
+    toast("🗑 Gelöscht – wird neu verarbeitet", "ok");
+    loadHistory();
+  } catch(e) { toast(e.message, "err"); }
+}
+
+async function retryInvoice(id) {
+  try {
+    await api("POST", `/api/history/${id}/retry`);
+    toast("🔄 Auf 'ausstehend' gesetzt", "ok");
+    loadHistory();
+  } catch(e) { toast(e.message, "err"); }
+}
+
+document.getElementById("history-filter-status").addEventListener("change", loadHistory);
+document.getElementById("history-filter-provider").addEventListener("change", loadHistory);
+
+// ── OTP Modal ──────────────────────────────────────────────────
+const otpModal = document.getElementById("otp-modal");
+
+function showOtpModal() {
+  otpModal.style.display = "flex";
+  document.getElementById("otp-input").value = "";
+  setTimeout(() => document.getElementById("otp-input").focus(), 50);
+}
+function hideOtpModal() { otpModal.style.display = "none"; }
+
+async function submitOtp() {
+  const code = document.getElementById("otp-input").value.trim();
+  if (!code) return;
+  try {
+    await api("POST", "/api/otp", { code });
+    hideOtpModal();
+    toast("✓ Code übermittelt", "ok");
+  } catch(e) { toast(e.message, "err"); }
+}
+document.getElementById("otp-input").addEventListener("keydown", e => {
+  if (e.key === "Enter") submitOtp();
+});
+
+setInterval(async () => {
+  try {
+    const { needed } = await api("GET", "/api/otp/status");
+    if (needed && otpModal.style.display !== "flex") showOtpModal();
+    else if (!needed && otpModal.style.display === "flex") hideOtpModal();
+  } catch(_) {}
+}, 2000);
 
 // ── Init ───────────────────────────────────────────────────────
 loadStats().then(data => {

@@ -24,7 +24,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from app import database
+from app import database, otp_state
 from app.version import __version__
 
 logger = logging.getLogger("web")
@@ -337,6 +337,55 @@ async def upload_provider(file: UploadFile = File(...)):
 
     logger.info("Custom Provider hochgeladen: %s", name)
     return {"ok": True, "name": name}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  API – Verlauf
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/history")
+async def get_history(status: str | None = None, provider: str | None = None):
+    rows = database.get_all_invoices(
+        limit=500, status=status or None, provider=provider or None
+    )
+    return {"invoices": rows}
+
+
+@app.delete("/api/history/{db_id}")
+async def delete_history_entry(db_id: int):
+    if not database.delete_invoice(db_id):
+        raise HTTPException(404, "Eintrag nicht gefunden")
+    return {"ok": True}
+
+
+@app.post("/api/history/{db_id}/retry")
+async def retry_history_entry(db_id: int):
+    if not database.reset_invoice(db_id):
+        raise HTTPException(404, "Eintrag nicht gefunden")
+    return {"ok": True}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  API – OTP (SMS 2FA)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/otp/status")
+async def get_otp_status():
+    return {"needed": otp_state.needed}
+
+
+class OtpSubmit(BaseModel):
+    code: str
+
+
+@app.post("/api/otp")
+async def submit_otp(body: OtpSubmit):
+    if not otp_state.needed:
+        raise HTTPException(400, "Kein OTP angefordert")
+    otp_state.submit_otp(body.code)
+    return {"ok": True}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
