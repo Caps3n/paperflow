@@ -303,14 +303,60 @@ class AmazonProvider(BaseProvider):
 
             logger.info("Login-Formular erkannt: %s", page.url[-80:])
 
-            # E-Mail eintippen
-            email_field = page.locator(
-                '#ap_email, input[name="email"], input[type="email"]'
-            ).first
-            email_field.fill(self.email)
+            # Warten bis das Formular vollständig geladen ist
+            try:
+                page.wait_for_load_state("load", timeout=15000)
+            except Exception:
+                pass
+            _human_sleep(1, 2)
+
+            # Screenshot für Debugging
+            try:
+                page.screenshot(path="/app/data/login_form_debug.png")
+                logger.info("Formular-Screenshot: /app/data/login_form_debug.png")
+            except Exception:
+                pass
+
+            # Diagnose: welche Felder gibt es?
+            diag = page.evaluate(
+                """() => ({
+                    emailCount: document.querySelectorAll('#ap_email, input[name="email"], input[type="email"]').length,
+                    emailVisible: !!document.querySelector('#ap_email'),
+                    title: document.title,
+                    bodySnippet: document.body.innerText.substring(0, 200)
+                })"""
+            )
+            logger.info(
+                "Formular-Diagnose: title=%r emailCount=%d emailVisible=%s",
+                diag.get("title"),
+                diag.get("emailCount", 0),
+                diag.get("emailVisible"),
+            )
+            if diag.get("emailCount", 0) == 0:
+                logger.warning(
+                    "Kein E-Mail-Feld gefunden! Seite: %s",
+                    diag.get("bodySnippet", "")[:150],
+                )
+
+            # E-Mail per JS setzen (umgeht Visibility-Check)
+            import json as _json
+
+            page.evaluate(
+                f"""() => {{
+                    const sel = '#ap_email, input[name="email"], input[type="email"], input[type="text"]';
+                    const el = document.querySelector(sel);
+                    if (!el) return;
+                    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    setter.call(el, {_json.dumps(self.email)});
+                    el.dispatchEvent(new Event('input', {{bubbles: true}}));
+                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    el.dispatchEvent(new Event('blur', {{bubbles: true}}));
+                }}"""
+            )
             _human_sleep(0.5, 1.5)
 
             # "Weiter" / "Continue" klicken
+            continued = False
             for sel in [
                 "#continue",
                 '[name="continue"]',
@@ -321,23 +367,36 @@ class AmazonProvider(BaseProvider):
                     btn = page.locator(sel).first
                     if btn.is_visible(timeout=2000):
                         btn.click()
+                        continued = True
                         break
                 except Exception:
                     continue
-            else:
+            if not continued:
                 page.keyboard.press("Return")
 
             _human_sleep(2, 4)
-            page.wait_for_load_state("networkidle", timeout=30000)
+            try:
+                page.wait_for_load_state("load", timeout=15000)
+            except Exception:
+                pass
 
-            # Passwort eintippen
-            password_field = page.locator(
-                '#ap_password, input[name="password"], input[type="password"]'
-            ).first
-            password_field.fill(self.password)
+            # Passwort per JS setzen
+            page.evaluate(
+                f"""() => {{
+                    const el = document.querySelector('#ap_password, input[name="password"], input[type="password"]');
+                    if (!el) return;
+                    el.removeAttribute('hidden');
+                    el.style.cssText = '';
+                    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    setter.call(el, {_json.dumps(self.password)});
+                    el.dispatchEvent(new Event('input', {{bubbles: true}}));
+                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                }}"""
+            )
             _human_sleep(0.5, 1.5)
 
             # "Anmelden" / "Sign in" klicken
+            signed = False
             for sel in [
                 "#signInSubmit",
                 '[name="signIn"]',
@@ -348,10 +407,11 @@ class AmazonProvider(BaseProvider):
                     btn = page.locator(sel).first
                     if btn.is_visible(timeout=2000):
                         btn.click()
+                        signed = True
                         break
                 except Exception:
                     continue
-            else:
+            if not signed:
                 page.keyboard.press("Return")
 
             _human_sleep(3, 5)
