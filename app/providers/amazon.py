@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 
 from pathlib import Path
@@ -180,6 +181,9 @@ class AmazonProvider(BaseProvider):
     # Bestellungen finden
     # ──────────────────────────────────────────────────────────────
 
+    # Amazon order ID pattern: 3 groups of digits separated by dashes
+    ORDER_ID_RE = re.compile(r"\b(\d{3}-\d{7}-\d{7})\b")
+
     def _get_order_ids(self, page: Page) -> list[str]:
         """Liest alle Bestellnummern der letzten N Monate."""
         order_ids: list[str] = []
@@ -189,23 +193,50 @@ class AmazonProvider(BaseProvider):
             wait_until="domcontentloaded",
             timeout=30000,
         )
-        time.sleep(2)
+        time.sleep(3)
 
         page_num = 0
         while True:
             page_num += 1
-            logger.debug("Scanne Bestellseite %d...", page_num)
+            logger.debug("Scanne Bestellseite %d (URL: %s)...", page_num, page.url)
 
-            # Bestellnummern aus der Seite extrahieren
-            ids = page.locator(".yohtmlc-order-id span:last-child").all_inner_texts()
-            if not ids:
-                # Fallback-Selektor
-                ids = page.locator("[class*='order-id'] span").all_inner_texts()
+            # Variante 1: CSS-Selektoren
+            found_via_css: list[str] = []
+            for selector in [
+                ".yohtmlc-order-id span:last-child",
+                "[class*='order-id'] span[dir='ltr']",
+                "[class*='order-id'] bdi",
+                ".a-fixed-right-grid-inner .a-col-left .a-row:first-child span:last-child",
+            ]:
+                texts = page.locator(selector).all_inner_texts()
+                for t in texts:
+                    t = t.strip()
+                    if self.ORDER_ID_RE.match(t) and t not in found_via_css:
+                        found_via_css.append(t)
+                if found_via_css:
+                    break
 
-            for oid in ids:
-                oid = oid.strip()
-                if oid and oid not in order_ids:
+            # Variante 2: Regex über gesamten Seiteninhalt (Fallback)
+            found_via_regex: list[str] = []
+            if not found_via_css:
+                content = page.content()
+                found_via_regex = list(dict.fromkeys(self.ORDER_ID_RE.findall(content)))
+                if found_via_regex:
+                    logger.debug(
+                        "Order-IDs via Regex gefunden: %d", len(found_via_regex)
+                    )
+
+            new_ids = found_via_css or found_via_regex
+            for oid in new_ids:
+                if oid not in order_ids:
                     order_ids.append(oid)
+
+            logger.info(
+                "Seite %d: %d Bestellungen gefunden (gesamt: %d)",
+                page_num,
+                len(new_ids),
+                len(order_ids),
+            )
 
             # Nächste Seite?
             next_btn = page.locator("ul.a-pagination li.a-last a")
@@ -215,7 +246,6 @@ class AmazonProvider(BaseProvider):
             next_btn.click()
             time.sleep(2)
 
-            # Abbruch wenn zu alt
             if page_num > 20:
                 break
 
