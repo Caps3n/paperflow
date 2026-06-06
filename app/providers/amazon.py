@@ -209,14 +209,29 @@ class AmazonProvider(BaseProvider):
         )
 
     def _ensure_logged_in(self, page: Page) -> bool:
-        """Prüft Login-Status und führt ggf. Login durch."""
-        page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
-        _human_sleep(2, 3)
+        """Prüft Login-Status über die Startseite (menschliches Navigationsverhalten)."""
+        # Zuerst zur Startseite – wie ein echter Nutzer
+        page.goto(self.urls["base"], wait_until="networkidle", timeout=45000)
+        _human_sleep(2, 4)
 
-        if not self._is_login_page(page) and (
-            "your-orders" in page.url or "/orders" in page.url
+        # Bereits eingeloggt? (Nav zeigt "Hallo, ..." oder "Konto und Listen")
+        already_in = page.evaluate(
+            """() => {
+                const nav = document.querySelector('#nav-link-accountList-nav-line-1, #nav-tools');
+                return nav ? nav.innerText : '';
+            }"""
+        )
+        logger.info(
+            "Nav-Text nach Startseite: %r", already_in[:60] if already_in else ""
+        )
+
+        if already_in and (
+            "hallo" in already_in.lower() or "hello" in already_in.lower()
         ):
             logger.info("Amazon: bereits eingeloggt (Cookies)")
+            # Zur Bestellseite navigieren
+            page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
+            _human_sleep(2, 3)
             return True
 
         logger.info("Amazon: Login notwendig...")
@@ -227,16 +242,12 @@ class AmazonProvider(BaseProvider):
 
     def _do_login(self, page: Page) -> bool:
         try:
-            # Zur Bestellseite – Amazon leitet selbst zur Login-Seite weiter
-            page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
-            _human_sleep(2, 4)
+            # Startseite (falls nicht schon dort)
+            if self.urls["base"] not in page.url:
+                page.goto(self.urls["base"], wait_until="networkidle", timeout=45000)
+                _human_sleep(2, 3)
 
-            # Falls schon eingeloggt
-            if not self._is_login_page(page):
-                logger.info("Bereits eingeloggt – kein Login nötig")
-                return True
-
-            logger.info("Login-Seite erkannt: %s", page.url[-120:])
+            logger.info("Navigiere zur Login-Seite über Menü: %s", page.url[-60:])
 
             # Screenshot für Debugging
             try:
@@ -245,7 +256,44 @@ class AmazonProvider(BaseProvider):
             except Exception:
                 pass
 
-            # E-Mail eintippen (mit Stealth funktioniert normales fill())
+            # Klick auf "Konto und Listen" / "Account & Lists" → Login-Seite
+            # Amazon zeigt entweder direkt Login oder ein Hover-Menü
+            signin_link = None
+            for sel in [
+                'a[data-nav-role="signin"]',
+                "#nav-link-accountList",
+                'a[href*="ap/signin"]',
+                "#nav-cvs-submitSignIn",
+            ]:
+                try:
+                    el = page.locator(sel).first
+                    if el.is_visible(timeout=2000):
+                        signin_link = el
+                        break
+                except Exception:
+                    continue
+
+            if signin_link:
+                signin_link.click()
+                _human_sleep(2, 3)
+                page.wait_for_load_state("networkidle", timeout=30000)
+            else:
+                # Direkt zur Login-URL
+                page.goto(
+                    f"{self.urls['login']}?openid.return_to={self.urls['orders']}",
+                    wait_until="networkidle",
+                    timeout=45000,
+                )
+                _human_sleep(2, 3)
+
+            if not self._is_login_page(page):
+                logger.info("Bereits eingeloggt nach Menü-Klick")
+                page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
+                return True
+
+            logger.info("Login-Formular erkannt: %s", page.url[-80:])
+
+            # E-Mail eintippen
             email_field = page.locator(
                 '#ap_email, input[name="email"], input[type="email"]'
             ).first
