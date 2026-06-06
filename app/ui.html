@@ -286,6 +286,17 @@ class MeinproviderProvider(BaseProvider):
 
 <div id="toast"></div>
 
+<!-- Login Required Modal -->
+<div id="login-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:101;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:32px;width:360px;text-align:center">
+    <div style="font-size:32px;margin-bottom:12px">🔑</div>
+    <div style="font-size:16px;font-weight:700;margin-bottom:6px">Amazon Session abgelaufen</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Die gespeicherte Amazon-Sitzung ist nicht mehr gültig. Klicke auf "Neu einloggen" – der nächste Lauf startet dann einen frischen Login (inkl. SMS-Code falls nötig).</div>
+    <button class="btn btn-primary" style="width:100%" onclick="resetAndRelogin()">🔄 Neu einloggen</button>
+    <button class="btn" style="width:100%;margin-top:8px" onclick="dismissLoginModal()">Später</button>
+  </div>
+</div>
+
 <!-- OTP Modal -->
 <div id="otp-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;display:none;align-items:center;justify-content:center">
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:32px;width:340px;text-align:center">
@@ -670,11 +681,41 @@ document.getElementById("otp-input").addEventListener("keydown", e => {
   if (e.key === "Enter") submitOtp();
 });
 
+// ── Login Required Modal ───────────────────────────────────────
+const loginModal = document.getElementById("login-modal");
+let loginModalDismissed = false;
+
+function showLoginModal() { loginModal.style.display = "flex"; }
+function hideLoginModal() { loginModal.style.display = "none"; }
+
+function dismissLoginModal() {
+  loginModalDismissed = true;
+  hideLoginModal();
+}
+
+async function resetAndRelogin() {
+  try {
+    await api("POST", "/api/amazon/reset-session");
+    hideLoginModal();
+    loginModalDismissed = false;
+    toast("Session zurückgesetzt – starte neuen Lauf...", "ok");
+    await api("POST", "/api/run");
+  } catch(e) { toast(e.message, "err"); }
+}
+
 setInterval(async () => {
   try {
-    const { needed } = await api("GET", "/api/otp/status");
+    const { needed, login_required } = await api("GET", "/api/otp/status");
+    // OTP modal
     if (needed && otpModal.style.display !== "flex") showOtpModal();
     else if (!needed && otpModal.style.display === "flex") hideOtpModal();
+    // Login required modal
+    if (login_required && !loginModalDismissed && loginModal.style.display !== "flex") {
+      showLoginModal();
+    } else if (!login_required) {
+      loginModalDismissed = false;
+      if (loginModal.style.display === "flex") hideLoginModal();
+    }
   } catch(_) {}
 }, 2000);
 

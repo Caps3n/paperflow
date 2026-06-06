@@ -377,7 +377,19 @@ async def retry_history_entry(db_id: int):
 
 @app.get("/api/otp/status")
 async def get_otp_status():
-    return {"needed": otp_state.needed}
+    return {
+        "needed": otp_state.needed,
+        "login_required": otp_state.login_required,
+        "login_running": otp_state.login_running,
+    }
+
+
+@app.post("/api/amazon/reset-session")
+async def reset_amazon_session():
+    """Löscht gespeicherte Cookies – nächster Lauf startet frischen Login."""
+    otp_state.clear_cookies()
+    otp_state.login_required = False
+    return {"ok": True}
 
 
 class OtpSubmit(BaseModel):

@@ -159,7 +159,10 @@ class AmazonProvider(BaseProvider):
             return True
 
         logger.info("Amazon: Login notwendig...")
-        return self._do_login(page)
+        otp_state.notify_login_required()
+        result = self._do_login(page)
+        otp_state.notify_login_done(result)
+        return result
 
     def _do_login(self, page: Page) -> bool:
         try:
@@ -268,7 +271,10 @@ class AmazonProvider(BaseProvider):
             logger.warning(
                 "Session abgelaufen bei %s – versuche Re-Login...", time_filter
             )
-            if not self._do_login(page):
+            otp_state.notify_login_required()
+            success = self._do_login(page)
+            otp_state.notify_login_done(success)
+            if not success:
                 logger.error("Re-Login fehlgeschlagen – überspringe %s", time_filter)
                 return 0
             # Nach Login nochmal zur Zielseite
