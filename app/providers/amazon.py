@@ -30,6 +30,14 @@ logger = logging.getLogger("provider.amazon")
 
 COOKIES_FILE = Path("/app/data/amazon_cookies.json")
 
+# Xvfb (pyvirtualdisplay) – falls im Container verfügbar → headless=False
+try:
+    from pyvirtualdisplay import Display as _XvfbDisplay
+
+    _HAS_XVFB = True
+except ImportError:
+    _HAS_XVFB = False
+
 
 def _human_sleep(min_s: float = 2.0, max_s: float = 5.0) -> None:
     """Zufällige Pause wie ein echter Mensch."""
@@ -70,44 +78,68 @@ class AmazonProvider(BaseProvider):
     def fetch_invoices(self) -> list[Invoice]:
         invoices: list[Invoice] = []
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-blink-features=AutomationControlled",
-                ],
-            )
-            context = self._create_context(browser)
-            page = context.new_page()
-
-            # Stealth auf die Page anwenden – patcht alle Bot-Erkennungs-Vektoren
-            stealth_sync(page)
-
-            # Virtual Authenticator via CDP – verhindert Passkey/FIDO-Dialoge
-            self._setup_virtual_authenticator(page)
-
+        # Xvfb starten falls verfügbar → headless=False für echte Browser-Fingerprints
+        display = None
+        use_headless = True
+        if _HAS_XVFB:
             try:
-                if not self._ensure_logged_in(page):
-                    logger.error("Amazon Login fehlgeschlagen – überspringe Provider")
-                    return []
-
-                self._save_cookies(context)
-
-                # Bestellungen + direkte PDF-URLs aus dem "Rechnung ▼" Dropdown holen
-                invoice_map = self._get_invoice_map(page)
-                logger.info("Rechnungen gefunden: %d", len(invoice_map))
-
-                for order_id, pdf_url in invoice_map.items():
-                    invoice = self._download_pdf(page, order_id, pdf_url)
-                    if invoice:
-                        invoices.append(invoice)
-
+                display = _XvfbDisplay(visible=False, size=(1280, 900))
+                display.start()
+                use_headless = False
+                logger.info("Xvfb gestartet – Browser läuft als headless=False")
             except Exception as e:
-                logger.exception("Unerwarteter Fehler beim Amazon-Fetch: %s", e)
-            finally:
-                browser.close()
+                logger.warning(
+                    "Xvfb konnte nicht gestartet werden: %s – fallback auf headless=True",
+                    e,
+                )
+
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=use_headless,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-blink-features=AutomationControlled",
+                    ],
+                )
+                context = self._create_context(browser)
+                page = context.new_page()
+
+                # Stealth auf die Page anwenden – patcht alle Bot-Erkennungs-Vektoren
+                stealth_sync(page)
+
+                # Virtual Authenticator via CDP – verhindert Passkey/FIDO-Dialoge
+                self._setup_virtual_authenticator(page)
+
+                try:
+                    if not self._ensure_logged_in(page):
+                        logger.error(
+                            "Amazon Login fehlgeschlagen – überspringe Provider"
+                        )
+                        return []
+
+                    self._save_cookies(context)
+
+                    # Bestellungen + direkte PDF-URLs aus dem "Rechnung ▼" Dropdown holen
+                    invoice_map = self._get_invoice_map(page)
+                    logger.info("Rechnungen gefunden: %d", len(invoice_map))
+
+                    for order_id, pdf_url in invoice_map.items():
+                        invoice = self._download_pdf(page, order_id, pdf_url)
+                        if invoice:
+                            invoices.append(invoice)
+
+                except Exception as e:
+                    logger.exception("Unerwarteter Fehler beim Amazon-Fetch: %s", e)
+                finally:
+                    browser.close()
+        finally:
+            if display:
+                try:
+                    display.stop()
+                except Exception:
+                    pass
 
         return invoices
 
