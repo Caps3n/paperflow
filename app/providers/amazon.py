@@ -309,6 +309,43 @@ class AmazonProvider(BaseProvider):
 
         return result
 
+    def _navigate_to_filter(self, page: Page, time_filter: str) -> bool:
+        """
+        Navigiert zur gefilterten Bestellliste.
+        Strategie 1: Dropdown-Select wie ein echter User (kein verdächtiger URL-Sprung).
+        Strategie 2: Fallback auf direkte URL-Navigation.
+        Gibt True zurück wenn Bestellseite erreicht, False bei Login-Redirect.
+        """
+        # Sicherstellen dass wir auf der Orders-Seite sind
+        if self._is_login_page(page) or not (
+            "order-history" in page.url or "your-orders" in page.url
+        ):
+            page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
+            time.sleep(3)
+            if self._is_login_page(page):
+                return False
+
+        # Strategie 1: Select-Element wie ein echter User bedienen
+        try:
+            sel_count = page.locator("#time-filter, select[name='timeFilter']").count()
+            if sel_count > 0:
+                page.select_option(
+                    "#time-filter, select[name='timeFilter']", time_filter
+                )
+                page.wait_for_load_state("networkidle", timeout=30000)
+                time.sleep(2)
+                if not self._is_login_page(page):
+                    logger.debug("Filter '%s' via Select-Element gesetzt", time_filter)
+                    return True
+        except Exception as e:
+            logger.debug("Select-Navigation fehlgeschlagen (%s), nutze URL", e)
+
+        # Strategie 2: Direkte URL-Navigation
+        url = f"{self.urls['orders']}?timeFilter={time_filter}"
+        page.goto(url, wait_until="networkidle", timeout=45000)
+        time.sleep(2)
+        return not self._is_login_page(page)
+
     def _scan_order_filter(
         self, page: Page, time_filter: str, result: dict[str, str]
     ) -> int:
@@ -317,12 +354,9 @@ class AmazonProvider(BaseProvider):
         und holt per fetch() direkt die PDF-Links – ohne Popup-Klick.
         Paginiert automatisch. Gibt die Anzahl neu gefundener Rechnungen zurück.
         """
-        url = f"{self.urls['orders']}?timeFilter={time_filter}"
-        page.goto(url, wait_until="networkidle", timeout=45000)
-        time.sleep(2)
-
-        # Session-Check: Amazon loggt headless Browser mid-scan manchmal aus
-        if self._is_login_page(page):
+        # Navigiere zur gefilterten Seite (Select-Dropdown bevorzugt)
+        if not self._navigate_to_filter(page, time_filter):
+            # Session abgelaufen → re-login
             logger.warning(
                 "Session abgelaufen bei %s – versuche Re-Login...", time_filter
             )
@@ -333,8 +367,11 @@ class AmazonProvider(BaseProvider):
                 logger.error("Re-Login fehlgeschlagen – überspringe %s", time_filter)
                 return 0
             # Nach Login nochmal zur Zielseite
-            page.goto(url, wait_until="networkidle", timeout=45000)
-            time.sleep(2)
+            if not self._navigate_to_filter(page, time_filter):
+                logger.error(
+                    "Nach Re-Login immer noch kein Zugriff auf %s", time_filter
+                )
+                return 0
 
         found_new = 0
         page_num = 0
