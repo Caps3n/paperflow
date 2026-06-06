@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
-from playwright_stealth import Stealth
+from playwright_stealth import stealth_sync
 
 from app import otp_state
 from app.providers import BaseProvider, Invoice
@@ -29,9 +29,6 @@ from app.providers import BaseProvider, Invoice
 logger = logging.getLogger("provider.amazon")
 
 COOKIES_FILE = Path("/app/data/amazon_cookies.json")
-
-# Stealth-Instanz einmalig erstellen
-_STEALTH = Stealth()
 
 
 def _human_sleep(min_s: float = 2.0, max_s: float = 5.0) -> None:
@@ -86,7 +83,7 @@ class AmazonProvider(BaseProvider):
             page = context.new_page()
 
             # Stealth auf die Page anwenden – patcht alle Bot-Erkennungs-Vektoren
-            _STEALTH.apply_stealth_sync(page)
+            stealth_sync(page)
 
             # Virtual Authenticator via CDP – verhindert Passkey/FIDO-Dialoge
             self._setup_virtual_authenticator(page)
