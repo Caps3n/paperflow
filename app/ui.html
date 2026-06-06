@@ -509,7 +509,45 @@ async function toggleSettings(name) {
     }
     html += `</div>`;
   }
+
+  // Amazon: Cookie-Import Sektion
+  if (name === "amazon") {
+    const cookieStatus = await api("GET", "/api/amazon/cookies-status").catch(() => ({ loaded: false }));
+    const statusText = cookieStatus.loaded
+      ? `✅ ${cookieStatus.count} Cookies geladen`
+      : `⚠️ Keine Cookies – Login via Browser nötig`;
+    const expiresText = cookieStatus.expires
+      ? `Läuft ab: ${new Date(cookieStatus.expires * 1000).toLocaleDateString("de-DE")}`
+      : "";
+    html += `
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px">🍪 Browser-Cookies importieren (empfohlen)</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        <strong style="color:var(--text)">So geht's:</strong><br>
+        1. Chrome-Extension <strong>„Cookie Editor"</strong> installieren<br>
+        2. Auf <strong>amazon.de einloggen</strong> (normaler Browser)<br>
+        3. Cookie Editor öffnen → <strong>Export → Export as JSON</strong><br>
+        4. Den kopierten JSON hier einfügen → Importieren
+      </div>
+      <div style="font-size:12px;margin-bottom:8px">${statusText} ${expiresText}</div>
+      <textarea id="cookie-import-${name}" rows="3" placeholder='[{"name":"session-id","value":"...","domain":".amazon.de",...}]'
+        style="width:100%;font-size:11px;font-family:monospace;resize:vertical;margin-bottom:8px"></textarea>
+      <button class="btn btn-primary btn-sm" onclick="importCookies('${name}')">📥 Cookies importieren</button>
+    </div>`;
+  }
+
   container.innerHTML = html;
+}
+
+async function importCookies(name) {
+  const raw = document.getElementById(`cookie-import-${name}`)?.value?.trim();
+  if (!raw) { toast("Bitte JSON einfügen", "err"); return; }
+  try {
+    await api("POST", "/api/amazon/import-cookies", { cookies: raw });
+    toast("✓ Cookies importiert – starte jetzt den Scan", "ok");
+    document.getElementById(`cookie-import-${name}`).value = "";
+    toggleSettings(name); toggleSettings(name); // Panel neu laden
+  } catch(e) { toast(e.message, "err"); }
 }
 
 async function saveProviderSettings(name) {
