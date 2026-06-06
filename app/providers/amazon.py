@@ -203,50 +203,57 @@ class AmazonProvider(BaseProvider):
                 except Exception:
                     pass
 
-            # E-Mail-Feld – mehrere mögliche Selektoren
-            email_sel = (
-                "#ap_email, input[name='email'], input[type='email'], "
-                "input[type='text'], input[type='tel']"
-            )
-            page.wait_for_selector(email_sel, timeout=30000)
-            email_loc = page.locator(email_sel).first
-            email_loc.fill(self.email)
+            # E-Mail per JS eintippen (löst React/native Events aus)
+            import json as _json_mod
+
+            page.evaluate(f"""() => {{
+                const sel = '#ap_email, input[name="email"], input[type="email"], input[type="text"], input[type="tel"]';
+                const el = document.querySelector(sel);
+                if (!el) return;
+                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                setter.call(el, {_json_mod.dumps(self.email)});
+                el.dispatchEvent(new Event('input', {{bubbles: true}}));
+                el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                el.dispatchEvent(new Event('blur', {{bubbles: true}}));
+            }}""")
             time.sleep(0.5)
 
-            # "Weiter"-Button klicken ODER Enter drücken (robuster)
-            cont_sel = (
-                "#continue, input[id='continue'], [name='continue'], "
-                "input[type='submit'], button[type='submit']"
+            # "Weiter" klicken oder Enter drücken
+            cont_els = page.query_selector_all(
+                "#continue, [name='continue'], input[type='submit'], button[type='submit']"
             )
-            cont_locs = page.locator(cont_sel)
-            if cont_locs.count() > 0:
+            if cont_els:
                 try:
-                    cont_locs.first.click(timeout=3000)
+                    cont_els[0].click()
                 except Exception:
-                    email_loc.press("Return")
+                    page.keyboard.press("Return")
             else:
-                email_loc.press("Return")
+                page.keyboard.press("Return")
 
-            # Warten bis Passwortfeld sichtbar wird
-            pw_sel = "#ap_password, input[name='password'], input[type='password']"
-            try:
-                page.wait_for_selector(pw_sel, state="visible", timeout=20000)
-            except Exception:
-                # Manchmal wird Passwort direkt ohne Continue gezeigt
-                page.wait_for_load_state("networkidle")
-                page.wait_for_selector(pw_sel, state="visible", timeout=10000)
-            page.locator(pw_sel).first.fill(self.password)
+            time.sleep(3)
+            page.wait_for_load_state("networkidle")
 
-            # Submit
-            submit_sel = (
-                "#signInSubmit, input[id='signInSubmit'], [name='signIn'], "
-                "input[type='submit'], button[type='submit']"
-            )
-            submit_locs = page.locator(submit_sel)
-            if submit_locs.count() > 0:
-                submit_locs.first.click()
-            else:
-                page.locator(pw_sel).first.press("Return")
+            # Passwort per JS eintippen – umgeht visibility-Anforderung komplett
+            page.evaluate(f"""() => {{
+                const el = document.querySelector('#ap_password, input[name="password"], input[type="password"]');
+                if (!el) return;
+                // Hidden-Attribute entfernen damit Form-Submit funktioniert
+                el.removeAttribute('hidden');
+                el.style.cssText = '';
+                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                setter.call(el, {_json_mod.dumps(self.password)});
+                el.dispatchEvent(new Event('input', {{bubbles: true}}));
+                el.dispatchEvent(new Event('change', {{bubbles: true}}));
+            }}""")
+            time.sleep(0.5)
+
+            # Submit per JS – kein Playwright-Click nötig
+            page.evaluate("""() => {
+                const btn = document.querySelector('#signInSubmit, input[id="signInSubmit"], [name="signIn"], input[type="submit"], button[type="submit"]');
+                if (btn) { btn.click(); return; }
+                const form = document.querySelector('form[name="signIn"], form');
+                if (form) form.submit();
+            }""")
             time.sleep(4)
 
             # 2FA / OTP (SMS oder Authenticator) – optional, falls aktiv
