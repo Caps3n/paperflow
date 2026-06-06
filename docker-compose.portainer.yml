@@ -2,9 +2,7 @@ version: "3.8"
 
 services:
   paperflow:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/caps3n/paperflow:latest
     container_name: paperflow
     restart: unless-stopped
     ports:
