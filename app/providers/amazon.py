@@ -38,12 +38,12 @@ class AmazonProvider(BaseProvider):
     DOMAINS = {
         "amazon.de": {
             "base": "https://www.amazon.de",
-            "orders": "https://www.amazon.de/gp/your-account/order-history",
+            "orders": "https://www.amazon.de/your-orders/orders",
             "login": "https://www.amazon.de/ap/signin",
         },
         "amazon.com": {
             "base": "https://www.amazon.com",
-            "orders": "https://www.amazon.com/gp/your-account/order-history",
+            "orders": "https://www.amazon.com/your-orders/orders",
             "login": "https://www.amazon.com/ap/signin",
         },
     }
@@ -153,7 +153,9 @@ class AmazonProvider(BaseProvider):
         time.sleep(2)
 
         if not self._is_login_page(page) and (
-            "order-history" in page.url or "your-orders" in page.url
+            "order-history" in page.url
+            or "your-orders" in page.url
+            or "/orders" in page.url
         ):
             logger.info("Amazon: bereits eingeloggt (Cookies)")
             return True
@@ -313,20 +315,16 @@ class AmazonProvider(BaseProvider):
 
     def _get_invoice_map(self, page: Page) -> dict[str, str]:
         """
-        Iteriert durch alle Jahre seit AMAZON_START_YEAR und sammelt pro Bestellung
-        den direkten PDF-Link.
+        Iteriert durch alle Jahre seit AMAZON_START_YEAR.
 
-        Verifiziert auf amazon.de:
-          - URL-Parameter: ?timeFilter=year-2024  (NICHT orderFilter!)
-          - "Rechnung" Link führt zu /your-orders/invoice/popover?orderId=...
-          - Der Popover-Endpunkt liefert HTML mit dem echten documents/download Link
-          - Wird direkt per fetch() geholt – kein Popup-Klick nötig
+        Neue URL: /your-orders/orders?timeFilter=year-X
+        (die alte /gp/your-account/order-history?timeFilter=year-X wurde von Amazon
+        für headless Sessions blockiert – die neue URL funktioniert)
         """
         import datetime
 
         result: dict[str, str] = {}
         current_year = datetime.date.today().year
-
         years = list(range(current_year, self.start_year - 1, -1))
         logger.info(
             "Scanne %d Jahre (%d–%d)...", len(years), self.start_year, current_year
@@ -344,35 +342,9 @@ class AmazonProvider(BaseProvider):
     def _navigate_to_filter(self, page: Page, time_filter: str) -> bool:
         """
         Navigiert zur gefilterten Bestellliste.
-        Strategie 1: Dropdown-Select wie ein echter User (kein verdächtiger URL-Sprung).
-        Strategie 2: Fallback auf direkte URL-Navigation.
-        Gibt True zurück wenn Bestellseite erreicht, False bei Login-Redirect.
+        Verwendet die neue Amazon-URL /your-orders/orders?timeFilter=year-X
+        (die alte /gp/your-account/order-history URL wird von Amazon blockiert).
         """
-        # Sicherstellen dass wir auf der Orders-Seite sind
-        if self._is_login_page(page) or not (
-            "order-history" in page.url or "your-orders" in page.url
-        ):
-            page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
-            time.sleep(3)
-            if self._is_login_page(page):
-                return False
-
-        # Strategie 1: Select-Element wie ein echter User bedienen
-        try:
-            sel_count = page.locator("#time-filter, select[name='timeFilter']").count()
-            if sel_count > 0:
-                page.select_option(
-                    "#time-filter, select[name='timeFilter']", time_filter
-                )
-                page.wait_for_load_state("networkidle", timeout=30000)
-                time.sleep(2)
-                if not self._is_login_page(page):
-                    logger.debug("Filter '%s' via Select-Element gesetzt", time_filter)
-                    return True
-        except Exception as e:
-            logger.debug("Select-Navigation fehlgeschlagen (%s), nutze URL", e)
-
-        # Strategie 2: Direkte URL-Navigation
         url = f"{self.urls['orders']}?timeFilter={time_filter}"
         page.goto(url, wait_until="networkidle", timeout=45000)
         time.sleep(2)
@@ -507,8 +479,8 @@ class AmazonProvider(BaseProvider):
             next_btn.click()
             time.sleep(2)
 
-            if page_num > 50:
-                logger.warning("Seitenlimit (50) erreicht für %s", time_filter)
+            if page_num > 500:
+                logger.warning("Seitenlimit (500) erreicht für %s", time_filter)
                 break
 
         return found_new
