@@ -68,12 +68,18 @@
   .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
   /* Provider cards */
-  .provider-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+  .provider-wrap { margin-bottom: 12px; }
+  .provider-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; display: flex; align-items: center; gap: 16px; }
+  .provider-wrap .provider-card { border-radius: var(--radius) var(--radius) 0 0; border-bottom: none; margin-bottom: 0; }
+  .provider-wrap .provider-card.collapsed { border-radius: var(--radius); border-bottom: 1px solid var(--border); }
   .provider-icon { width: 40px; height: 40px; border-radius: 10px; background: var(--surface2); display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
   .provider-info { flex: 1; }
   .provider-name { font-weight: 700; font-size: 15px; text-transform: capitalize; }
   .provider-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
   .provider-actions { display: flex; gap: 8px; align-items: center; }
+  .provider-settings-panel { background: var(--surface2); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); padding: 20px; }
+  .provider-settings-panel .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .provider-settings-panel .form-group { margin-bottom: 14px; }
 
   /* Toggle switch */
   .toggle { position: relative; display: inline-block; width: 42px; height: 24px; }
@@ -268,7 +274,6 @@ const PROVIDER_ICONS = { amazon: "🛒", ebay: "🏷️", paypal: "💳", defaul
 
 async function loadStats() {
   const data = await api("GET", "/api/stats");
-  return data;
   const grid = document.getElementById("stats-grid");
   const { stats, last_run, running } = data;
 
@@ -361,45 +366,107 @@ async function loadProviders() {
     return;
   }
   list.innerHTML = providers.map(p => `
-    <div class="provider-card" id="pcard-${p.name}">
-      <div class="provider-icon">${PROVIDER_ICONS[p.name] || "🔌"}</div>
-      <div class="provider-info">
-        <div class="provider-name">${p.name} ${p.custom ? '<span class="badge badge-blue">Custom</span>' : ""}</div>
-        <div class="provider-meta">
-          ${p.tags.map(t => `<span class="tag">${t}</span>`).join(" ")}
-          ${p.correspondent ? `<span class="tag">→ ${p.correspondent}</span>` : ""}
+    <div class="provider-wrap" id="pwrap-${p.name}">
+      <div class="provider-card collapsed" id="pcard-${p.name}">
+        <div class="provider-icon">${PROVIDER_ICONS[p.name] || "🔌"}</div>
+        <div class="provider-info">
+          <div class="provider-name">${p.name} ${p.custom ? '<span class="badge badge-blue">Custom</span>' : ""}</div>
+          <div class="provider-meta">
+            ${p.tags.map(t => `<span class="tag">${t}</span>`).join(" ")}
+            ${p.correspondent ? `<span class="tag">→ ${p.correspondent}</span>` : ""}
+          </div>
+        </div>
+        <div class="provider-actions">
+          <button class="btn btn-ghost btn-sm" onclick="toggleSettings('${p.name}')">⚙️ Einstellungen</button>
+          ${p.custom ? `<button class="btn btn-danger btn-sm" onclick="deleteProvider('${p.name}')">🗑</button>` : ""}
+          <label class="toggle">
+            <input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggleProvider('${p.name}', this.checked)">
+            <span class="toggle-slider"></span>
+          </label>
         </div>
       </div>
-      <div class="provider-actions">
-        <button class="btn btn-ghost btn-sm" onclick="editProvider('${p.name}','${p.tags.join(",")}','${p.correspondent}')">✏️ Bearbeiten</button>
-        ${p.custom ? `<button class="btn btn-danger btn-sm" onclick="deleteProvider('${p.name}')">🗑</button>` : ""}
-        <label class="toggle">
-          <input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggleProvider('${p.name}', this.checked, '${p.tags.join(",")}', '${p.correspondent}')">
-          <span class="toggle-slider"></span>
-        </label>
+      <div class="provider-settings-panel" id="psettings-${p.name}" style="display:none">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--border)">Einstellungen – ${p.name}</div>
+        <div id="psettings-fields-${p.name}"><div style="color:var(--muted);font-size:13px">Lade…</div></div>
+        <div style="margin-top:4px;display:flex;gap:10px">
+          <button class="btn btn-primary btn-sm" onclick="saveProviderSettings('${p.name}')">💾 Speichern</button>
+        </div>
       </div>
     </div>`).join("");
 }
 
-async function toggleProvider(name, enabled, tagsStr, correspondent) {
-  const tags = tagsStr ? tagsStr.split(",").filter(Boolean) : [];
+async function toggleSettings(name) {
+  const panel = document.getElementById(`psettings-${name}`);
+  const card = document.getElementById(`pcard-${name}`);
+  const open = panel.style.display !== "none";
+  if (open) {
+    panel.style.display = "none";
+    card.classList.add("collapsed");
+    return;
+  }
+  card.classList.remove("collapsed");
+  panel.style.display = "block";
+  // Lade Settings + Provider-Config
+  const [settingsData, providerData] = await Promise.all([
+    api("GET", `/api/providers/${name}/settings`).catch(() => ({ fields: [], values: {} })),
+    api("GET", "/api/providers").then(d => d.providers.find(p => p.name === name)),
+  ]);
+  const container = document.getElementById(`psettings-fields-${name}`);
+  let html = "";
+  // Paperless-Ziel-Einstellungen
+  html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+    <div class="form-group"><label>Tags (kommasepariert)</label>
+      <input type="text" id="ptags-${name}" value="${(providerData?.tags||[]).join(",")}" placeholder="Rechnung, Amazon"></div>
+    <div class="form-group"><label>Korrespondent</label>
+      <input type="text" id="pcorr-${name}" value="${providerData?.correspondent||""}" placeholder="Amazon DE"></div>
+  </div>`;
+  // Provider-spezifische Env-Felder
+  if (settingsData.fields.length > 0) {
+    html += `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px">Zugangsdaten</div>`;
+    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">`;
+    for (const f of settingsData.fields) {
+      const val = (settingsData.values[f.key] || "").replace(/"/g, "&quot;");
+      if (f.type === "select") {
+        html += `<div class="form-group"><label>${f.label}</label>
+          <select data-envkey="${f.key}">${f.options.map(o => `<option value="${o}"${o===val?" selected":""}>${o}</option>`).join("")}</select></div>`;
+      } else {
+        html += `<div class="form-group"><label>${f.label}</label>
+          <input type="${f.type}" data-envkey="${f.key}" value="${val}" autocomplete="off"></div>`;
+      }
+    }
+    html += `</div>`;
+  }
+  container.innerHTML = html;
+}
+
+async function saveProviderSettings(name) {
+  const panel = document.getElementById(`psettings-${name}`);
+  const card = document.getElementById(`pcard-${name}`);
+  // Tags + Correspondent
+  const tags = (document.getElementById(`ptags-${name}`)?.value || "").split(",").map(t=>t.trim()).filter(Boolean);
+  const correspondent = document.getElementById(`pcorr-${name}`)?.value || "";
+  const enabled = card.querySelector("input[type=checkbox]").checked;
+  // Env-Felder
+  const envValues = {};
+  panel.querySelectorAll("[data-envkey]").forEach(el => { envValues[el.dataset.envkey] = el.value; });
+  try {
+    await Promise.all([
+      api("PUT", `/api/providers/${name}`, { enabled, tags, correspondent }),
+      Object.keys(envValues).length ? api("POST", `/api/providers/${name}/settings`, { values: envValues }) : Promise.resolve(),
+    ]);
+    toast("✓ Gespeichert", "ok");
+    loadProviders();
+  } catch(e) { toast(e.message, "err"); }
+}
+
+async function toggleProvider(name, enabled) {
+  const panel = document.getElementById(`psettings-${name}`);
+  const tags = (document.getElementById(`ptags-${name}`)?.value || "").split(",").map(t=>t.trim()).filter(Boolean);
+  const correspondent = document.getElementById(`pcorr-${name}`)?.value || "";
   try {
     await api("PUT", `/api/providers/${name}`, { enabled, tags, correspondent });
     toast(enabled ? `✓ ${name} aktiviert` : `${name} deaktiviert`, "ok");
   } catch(e) { toast(e.message, "err"); }
-}
-
-function editProvider(name, tagsStr, correspondent) {
-  const tags = prompt(`Tags für ${name} (kommasepariert):`, tagsStr);
-  if (tags === null) return;
-  const corr = prompt(`Korrespondent für ${name}:`, correspondent);
-  if (corr === null) return;
-  const card = document.getElementById("pcard-" + name);
-  const enabled = card.querySelector("input[type=checkbox]").checked;
-  api("PUT", `/api/providers/${name}`, {
-    enabled, tags: tags.split(",").map(t => t.trim()).filter(Boolean), correspondent: corr
-  }).then(() => { toast("✓ Gespeichert", "ok"); loadProviders(); })
-    .catch(e => toast(e.message, "err"));
 }
 
 async function deleteProvider(name) {

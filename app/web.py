@@ -102,7 +102,7 @@ async def trigger_run():
 #  API – Einstellungen (.env)
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Felder die im UI angezeigt werden (Reihenfolge + Metadaten)
+# Globale Einstellungen (nur Paperless + Scheduler)
 ENV_FIELDS = [
     {
         "key": "PAPERLESS_URL",
@@ -115,32 +115,6 @@ ENV_FIELDS = [
         "label": "API Token",
         "type": "password",
         "group": "Paperless-NGX",
-    },
-    {"key": "AMAZON_EMAIL", "label": "E-Mail", "type": "email", "group": "Amazon"},
-    {
-        "key": "AMAZON_PASSWORD",
-        "label": "Passwort",
-        "type": "password",
-        "group": "Amazon",
-    },
-    {
-        "key": "AMAZON_DOMAIN",
-        "label": "Domain",
-        "type": "select",
-        "group": "Amazon",
-        "options": ["amazon.de", "amazon.com"],
-    },
-    {
-        "key": "AMAZON_MONTHS_BACK",
-        "label": "Monate zurück",
-        "type": "number",
-        "group": "Amazon",
-    },
-    {
-        "key": "AMAZON_OTP_CODE",
-        "label": "2FA OTP (einmalig)",
-        "type": "text",
-        "group": "Amazon",
     },
     {
         "key": "RUN_INTERVAL_HOURS",
@@ -156,6 +130,22 @@ ENV_FIELDS = [
         "options": ["true", "false"],
     },
 ]
+
+# Provider-spezifische Einstellungen (werden ebenfalls in .env gespeichert)
+PROVIDER_ENV_FIELDS: dict[str, list[dict]] = {
+    "amazon": [
+        {"key": "AMAZON_EMAIL", "label": "E-Mail", "type": "email"},
+        {"key": "AMAZON_PASSWORD", "label": "Passwort", "type": "password"},
+        {
+            "key": "AMAZON_DOMAIN",
+            "label": "Domain",
+            "type": "select",
+            "options": ["amazon.de", "amazon.com"],
+        },
+        {"key": "AMAZON_MONTHS_BACK", "label": "Monate zurück", "type": "number"},
+        {"key": "AMAZON_OTP_CODE", "label": "2FA OTP (einmalig)", "type": "text"},
+    ],
+}
 
 
 def _read_env() -> dict[str, str]:
@@ -254,9 +244,28 @@ async def list_providers():
                 "tags": pc.get("tags", []),
                 "correspondent": pc.get("correspondent", ""),
                 "custom": name in [p.stem for p in PROVIDERS_DIR.glob("*.py")],
+                "has_env_settings": name in PROVIDER_ENV_FIELDS,
             }
         )
     return {"providers": result}
+
+
+@app.get("/api/providers/{name}/settings")
+async def get_provider_settings(name: str):
+    fields = PROVIDER_ENV_FIELDS.get(name, [])
+    values = _read_env()
+    return {
+        "fields": fields,
+        "values": {f["key"]: values.get(f["key"], "") for f in fields},
+    }
+
+
+@app.post("/api/providers/{name}/settings")
+async def save_provider_settings(name: str, body: SettingsSave):
+    current = _read_env()
+    current.update(body.values)
+    _write_env(current)
+    return {"ok": True}
 
 
 class ProviderUpdate(BaseModel):
