@@ -211,7 +211,7 @@ class AmazonProvider(BaseProvider):
     def _ensure_logged_in(self, page: Page) -> bool:
         """Prüft Login-Status über die Startseite (menschliches Navigationsverhalten)."""
         # Zuerst zur Startseite – wie ein echter Nutzer
-        page.goto(self.urls["base"], wait_until="networkidle", timeout=45000)
+        page.goto(self.urls["base"], wait_until="domcontentloaded", timeout=45000)
         _human_sleep(2, 4)
 
         # Bereits eingeloggt? (Nav zeigt "Hallo, ..." oder "Konto und Listen")
@@ -236,7 +236,7 @@ class AmazonProvider(BaseProvider):
         if is_logged_in:
             logger.info("Amazon: bereits eingeloggt (Cookies)")
             # Zur Bestellseite navigieren
-            page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
+            page.goto(self.urls["orders"], wait_until="domcontentloaded", timeout=45000)
             _human_sleep(2, 3)
             return True
 
@@ -250,7 +250,9 @@ class AmazonProvider(BaseProvider):
         try:
             # Startseite (falls nicht schon dort)
             if self.urls["base"] not in page.url:
-                page.goto(self.urls["base"], wait_until="networkidle", timeout=45000)
+                page.goto(
+                    self.urls["base"], wait_until="domcontentloaded", timeout=45000
+                )
                 _human_sleep(2, 3)
 
             logger.info("Navigiere zur Login-Seite über Menü: %s", page.url[-60:])
@@ -294,7 +296,9 @@ class AmazonProvider(BaseProvider):
 
             if not self._is_login_page(page):
                 logger.info("Bereits eingeloggt nach Menü-Klick")
-                page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
+                page.goto(
+                    self.urls["orders"], wait_until="domcontentloaded", timeout=45000
+                )
                 return True
 
             logger.info("Login-Formular erkannt: %s", page.url[-80:])
@@ -386,7 +390,7 @@ class AmazonProvider(BaseProvider):
                     pass
 
             # Nach Login zur Bestellseite
-            page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
+            page.goto(self.urls["orders"], wait_until="domcontentloaded", timeout=45000)
             _human_sleep(2, 3)
 
             if "your-orders" in page.url or "/orders" in page.url:
@@ -444,7 +448,7 @@ class AmazonProvider(BaseProvider):
 
         # Falls wir nicht auf der Bestellseite sind, dorthin navigieren
         if orders_url.split("?")[0] not in page.url:
-            page.goto(orders_url, wait_until="networkidle", timeout=45000)
+            page.goto(orders_url, wait_until="domcontentloaded", timeout=45000)
             _human_sleep(2, 3)
 
         if self._is_login_page(page):
@@ -481,7 +485,7 @@ class AmazonProvider(BaseProvider):
         # Fallback: direkt per URL
         url = f"{orders_url}?timeFilter={time_filter}"
         logger.info("URL-Navigation: %s", url[-80:])
-        page.goto(url, wait_until="networkidle", timeout=45000)
+        page.goto(url, wait_until="domcontentloaded", timeout=45000)
         _human_sleep(2, 3)
         logger.info(
             "Nach URL-Navigation: URL=%s | login=%s",
