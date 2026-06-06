@@ -204,24 +204,49 @@ class AmazonProvider(BaseProvider):
                     pass
 
             # E-Mail-Feld – mehrere mögliche Selektoren
-            email_sel = "#ap_email, input[name='email'], input[type='email']"
+            email_sel = (
+                "#ap_email, input[name='email'], input[type='email'], "
+                "input[type='text'], input[type='tel']"
+            )
             page.wait_for_selector(email_sel, timeout=30000)
-            page.locator(email_sel).first.fill(self.email)
+            email_loc = page.locator(email_sel).first
+            email_loc.fill(self.email)
+            time.sleep(0.5)
 
-            # Continue-Button – mehrere mögliche Selektoren
-            cont_sel = "#continue, input[id='continue'], [name='continue']"
-            if page.locator(cont_sel).count() > 0:
-                page.locator(cont_sel).first.click()
-                time.sleep(2)
+            # "Weiter"-Button klicken ODER Enter drücken (robuster)
+            cont_sel = (
+                "#continue, input[id='continue'], [name='continue'], "
+                "input[type='submit'], button[type='submit']"
+            )
+            cont_locs = page.locator(cont_sel)
+            if cont_locs.count() > 0:
+                try:
+                    cont_locs.first.click(timeout=3000)
+                except Exception:
+                    email_loc.press("Return")
+            else:
+                email_loc.press("Return")
 
-            # Passwort-Feld
+            # Warten bis Passwortfeld sichtbar wird
             pw_sel = "#ap_password, input[name='password'], input[type='password']"
-            page.wait_for_selector(pw_sel, timeout=15000)
+            try:
+                page.wait_for_selector(pw_sel, state="visible", timeout=20000)
+            except Exception:
+                # Manchmal wird Passwort direkt ohne Continue gezeigt
+                page.wait_for_load_state("networkidle")
+                page.wait_for_selector(pw_sel, state="visible", timeout=10000)
             page.locator(pw_sel).first.fill(self.password)
 
             # Submit
-            submit_sel = "#signInSubmit, input[id='signInSubmit'], [name='signIn']"
-            page.locator(submit_sel).first.click()
+            submit_sel = (
+                "#signInSubmit, input[id='signInSubmit'], [name='signIn'], "
+                "input[type='submit'], button[type='submit']"
+            )
+            submit_locs = page.locator(submit_sel)
+            if submit_locs.count() > 0:
+                submit_locs.first.click()
+            else:
+                page.locator(pw_sel).first.press("Return")
             time.sleep(4)
 
             # 2FA / OTP (SMS oder Authenticator) – optional, falls aktiv
