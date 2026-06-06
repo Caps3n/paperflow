@@ -1,0 +1,16 @@
+# Provider-Konfiguration
+# Setze 'enabled: true' um einen Provider zu aktivieren
+
+providers:
+  amazon:
+    enabled: true
+    # Paperless-Tag der automatisch gesetzt wird
+    tags: ["Amazon", "Rechnung"]
+    # Paperless-Correspondent
+    correspondent: "Amazon"
+
+  # Weitere Provider können hier hinzugefügt werden:
+  # ebay:
+  #   enabled: false
+  #   tags: ["eBay", "Rechnung"]
+  #   correspondent: "eBay"

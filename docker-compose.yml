@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  invoice-fetcher:
+    build: .
+    container_name: invoice-fetcher
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"               # Web-Interface → http://localhost:8080
+    volumes:
+      - ./data:/app/data                      # SQLite Datenbank (persistent)
+      - ./downloads:/app/downloads            # Temporäre Downloads
+      - ./config:/app/config                  # Provider-Konfiguration + .env
+      - ./providers_custom:/app/providers_custom  # Eigene Provider
+    # Für Playwright im Docker (kein Display nötig - headless)
+    shm_size: "2gb"
+    environment:
+      - DISPLAY=:99

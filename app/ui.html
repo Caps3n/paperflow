@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Invoice Fetcher</title>
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --surface2: #22263a;
+    --border: #2e3350; --accent: #4f8ef7; --accent2: #6ee7b7;
+    --red: #f87171; --yellow: #fbbf24; --green: #34d399;
+    --text: #e2e8f0; --muted: #64748b; --radius: 10px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; }
+
+  /* Layout */
+  .layout { display: flex; min-height: 100vh; }
+  .sidebar { width: 220px; background: var(--surface); border-right: 1px solid var(--border); padding: 24px 0; flex-shrink: 0; }
+  .main { flex: 1; padding: 32px; overflow-y: auto; max-width: 1000px; }
+  .logo { padding: 0 20px 24px; font-size: 16px; font-weight: 700; color: var(--accent); border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+  .logo span { color: var(--muted); font-weight: 400; font-size: 12px; display: block; margin-top: 2px; }
+  nav a { display: flex; align-items: center; gap: 10px; padding: 10px 20px; color: var(--muted); text-decoration: none; transition: .15s; cursor: pointer; border-left: 3px solid transparent; }
+  nav a:hover { color: var(--text); background: var(--surface2); }
+  nav a.active { color: var(--accent); border-left-color: var(--accent); background: rgba(79,142,247,.08); }
+  nav a .icon { font-size: 16px; width: 20px; text-align: center; }
+
+  /* Pages */
+  .page { display: none; } .page.active { display: block; }
+  h1 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+  .subtitle { color: var(--muted); margin-bottom: 28px; font-size: 13px; }
+
+  /* Cards */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+  .card-title { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 14px; }
+
+  /* Stats grid */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; margin-bottom: 24px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; text-align: center; }
+  .stat-val { font-size: 28px; font-weight: 700; color: var(--accent); }
+  .stat-label { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+  /* Buttons */
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 7px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; transition: .15s; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #3b78e7; }
+  .btn-primary:disabled { opacity: .5; cursor: default; }
+  .btn-danger { background: var(--red); color: #fff; }
+  .btn-danger:hover { background: #dc2626; }
+  .btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-ghost:hover { background: var(--border); }
+  .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+  /* Badge */
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .badge-green { background: rgba(52,211,153,.15); color: var(--green); }
+  .badge-red { background: rgba(248,113,113,.15); color: var(--red); }
+  .badge-yellow { background: rgba(251,191,36,.15); color: var(--yellow); }
+  .badge-blue { background: rgba(79,142,247,.15); color: var(--accent); }
+
+  /* Forms */
+  .form-group { margin-bottom: 16px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
+  input, select, textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 7px; padding: 8px 12px; font-size: 13px; outline: none; transition: border-color .15s; }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  .form-section { margin-bottom: 24px; }
+  .form-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+  /* Provider cards */
+  .provider-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+  .provider-icon { width: 40px; height: 40px; border-radius: 10px; background: var(--surface2); display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+  .provider-info { flex: 1; }
+  .provider-name { font-weight: 700; font-size: 15px; text-transform: capitalize; }
+  .provider-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .provider-actions { display: flex; gap: 8px; align-items: center; }
+
+  /* Toggle switch */
+  .toggle { position: relative; display: inline-block; width: 42px; height: 24px; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; inset: 0; background: var(--surface2); border: 1px solid var(--border); border-radius: 24px; cursor: pointer; transition: .2s; }
+  .toggle-slider:before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; bottom: 3px; background: var(--muted); border-radius: 50%; transition: .2s; }
+  input:checked + .toggle-slider { background: var(--accent); border-color: var(--accent); }
+  input:checked + .toggle-slider:before { transform: translateX(18px); background: #fff; }
+
+  /* Upload zone */
+  .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 32px; text-align: center; cursor: pointer; transition: .2s; }
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--accent); background: rgba(79,142,247,.05); }
+  .upload-zone input { display: none; }
+  .upload-zone .icon { font-size: 32px; margin-bottom: 10px; }
+  .upload-zone p { color: var(--muted); font-size: 13px; }
+  .upload-zone strong { color: var(--text); }
+
+  /* Logs */
+  .log-box { background: #0a0c14; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; font-family: "SF Mono", "Fira Code", monospace; font-size: 12px; line-height: 1.6; overflow-y: auto; height: 480px; }
+  .log-line { white-space: pre-wrap; word-break: break-all; }
+  .log-line.err { color: var(--red); }
+  .log-line.warn { color: var(--yellow); }
+  .log-line.ok { color: var(--green); }
+
+  /* Toast */
+  #toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 18px; font-size: 13px; z-index: 999; opacity: 0; transform: translateY(10px); transition: .3s; pointer-events: none; }
+  #toast.show { opacity: 1; transform: none; }
+  #toast.ok { border-color: var(--green); color: var(--green); }
+  #toast.err { border-color: var(--red); color: var(--red); }
+
+  /* Status dot */
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot-green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot-red { background: var(--red); }
+  .dot-yellow { background: var(--yellow); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .spacer { flex: 1; }
+  .tag { background: var(--surface2); border: 1px solid var(--border); border-radius: 5px; padding: 2px 8px; font-size: 11px; color: var(--muted); }
+
+  /* Template hint */
+  .code-block { background: #0a0c14; border: 1px solid var(--border); border-radius: 8px; padding: 16px; font-family: monospace; font-size: 12px; line-height: 1.7; color: #a5b4fc; overflow-x: auto; white-space: pre; margin-top: 12px; }
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="logo">📄 paperflow<span id="ver">→ Paperless-NGX</span></div>
+    <nav>
+      <a class="active" data-page="dashboard"><span class="icon">📊</span>Dashboard</a>
+      <a data-page="settings"><span class="icon">⚙️</span>Einstellungen</a>
+      <a data-page="providers"><span class="icon">🔌</span>Provider</a>
+      <a data-page="logs"><span class="icon">📋</span>Logs</a>
+    </nav>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- ── DASHBOARD ── -->
+    <div class="page active" id="page-dashboard">
+      <h1>Dashboard</h1>
+      <p class="subtitle">Übersicht aller Rechnungen und letzter Lauf</p>
+
+      <div class="row" style="margin-bottom:20px">
+        <div id="run-status" class="row"><span class="dot dot-green"></span> <span style="color:var(--muted);font-size:13px">Bereit</span></div>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" id="btn-run">▶ Jetzt ausführen</button>
+      </div>
+
+      <div class="stats" id="stats-grid">
+        <div class="stat"><div class="stat-val">–</div><div class="stat-label">Gesamt</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Letzter Lauf</div>
+        <div id="last-run-info" style="color:var(--muted);font-size:13px">Noch kein Lauf</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Schnellstart</div>
+        <ol style="padding-left:18px;line-height:2;color:var(--muted);font-size:13px">
+          <li>Gehe zu <strong style="color:var(--text)">Einstellungen</strong> und trage deine Zugangsdaten ein</li>
+          <li>Gehe zu <strong style="color:var(--text)">Provider</strong> und aktiviere Amazon (oder lade einen eigenen hoch)</li>
+          <li>Klicke <strong style="color:var(--text)">Jetzt ausführen</strong></li>
+        </ol>
+      </div>
+    </div>
+
+    <!-- ── EINSTELLUNGEN ── -->
+    <div class="page" id="page-settings">
+      <h1>Einstellungen</h1>
+      <p class="subtitle">Zugangsdaten und Konfiguration – werden in der .env gespeichert</p>
+      <form id="settings-form">
+        <div id="settings-fields"></div>
+        <button type="submit" class="btn btn-primary">💾 Speichern</button>
+      </form>
+    </div>
+
+    <!-- ── PROVIDER ── -->
+    <div class="page" id="page-providers">
+      <h1>Provider</h1>
+      <p class="subtitle">Provider aktivieren/deaktivieren oder eigene hochladen</p>
+
+      <div id="provider-list"></div>
+
+      <div class="card" style="margin-top:24px">
+        <div class="card-title">Eigenen Provider hochladen</div>
+        <div class="upload-zone" id="upload-zone">
+          <input type="file" id="provider-file" accept=".py">
+          <div class="icon">📁</div>
+          <p><strong>Python-Datei hier ablegen</strong> oder klicken zum Auswählen</p>
+          <p style="margin-top:6px;font-size:11px">Nur .py Dateien · muss BaseProvider erben</p>
+        </div>
+        <div class="code-block" style="margin-top:16px"><span style="color:#64748b"># Vorlage – speichere als meinprovider.py</span>
+from app.providers import BaseProvider, Invoice
+from pathlib import Path
+
+class MeinproviderProvider(BaseProvider):
+    provider_name = "meinprovider"
+
+    def fetch_invoices(self) -> list[Invoice]:
+        # Hier Logik zum Download eintragen
+        # Gib eine Liste von Invoice-Objekten zurück
+        return [
+            Invoice(
+                invoice_id="2024-001",
+                file_path=Path("/app/downloads/meinprovider/rechnung.pdf"),
+                title="Mein Provider Rechnung 2024-001",
+                date="2024-01-15",
+            )
+        ]</div>
+      </div>
+    </div>
+
+    <!-- ── LOGS ── -->
+    <div class="page" id="page-logs">
+      <h1>Logs</h1>
+      <p class="subtitle">Ausgabe des letzten / laufenden Durchgangs</p>
+      <div class="row" style="margin-bottom:12px">
+        <button class="btn btn-ghost btn-sm" id="btn-refresh-logs">🔄 Aktualisieren</button>
+        <label class="toggle" style="margin-left:auto">
+          <input type="checkbox" id="auto-refresh-toggle" checked>
+          <span class="toggle-slider"></span>
+        </label>
+        <span style="color:var(--muted);font-size:12px">Auto-Refresh</span>
+      </div>
+      <div class="log-box" id="log-box"></div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /layout -->
+
+<div id="toast"></div>
+
+<script>
+// ── Navigation ─────────────────────────────────────────────────
+document.querySelectorAll("nav a").forEach(a => {
+  a.addEventListener("click", () => {
+    document.querySelectorAll("nav a").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".page").forEach(x => x.classList.remove("active"));
+    a.classList.add("active");
+    document.getElementById("page-" + a.dataset.page).classList.add("active");
+    if (a.dataset.page === "providers") loadProviders();
+    if (a.dataset.page === "settings") loadSettings();
+    if (a.dataset.page === "logs") loadLogs();
+    if (a.dataset.page === "dashboard") loadStats();
+  });
+});
+
+// ── Toast ──────────────────────────────────────────────────────
+function toast(msg, type = "ok") {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.className = "show " + type;
+  setTimeout(() => t.className = "", 3000);
+}
+
+// ── API helper ─────────────────────────────────────────────────
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers["Content-Type"] = "application/json"; }
+  const r = await fetch(path, opts);
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+  return r.json();
+}
+
+// ── DASHBOARD ──────────────────────────────────────────────────
+const PROVIDER_ICONS = { amazon: "🛒", ebay: "🏷️", paypal: "💳", default: "📦" };
+
+async function loadStats() {
+  const data = await api("GET", "/api/stats");
+  return data;
+  const grid = document.getElementById("stats-grid");
+  const { stats, last_run, running } = data;
+
+  // Status
+  const dot = document.querySelector("#run-status .dot");
+  const statusText = document.querySelector("#run-status span:last-child");
+  dot.className = "dot " + (running ? "dot-yellow" : "dot-green");
+  statusText.textContent = running ? "Läuft gerade…" : "Bereit";
+  document.getElementById("btn-run").disabled = running;
+
+  // Last run
+  if (last_run.time) {
+    const d = new Date(last_run.time + "Z");
+    document.getElementById("last-run-info").innerHTML =
+      `<span>${d.toLocaleString("de-DE")}</span> &nbsp;
+       <span class="badge ${last_run.status === "ok" ? "badge-green" : last_run.status === "running" ? "badge-yellow" : "badge-red"}">
+         ${last_run.status}
+       </span>`;
+  }
+
+  // Stats
+  let total = 0, uploaded = 0, failed = 0;
+  for (const [prov, s] of Object.entries(stats)) {
+    for (const [st, cnt] of Object.entries(s)) {
+      total += cnt;
+      if (st === "uploaded") uploaded += cnt;
+      if (st === "failed") failed += cnt;
+    }
+  }
+  grid.innerHTML = `
+    <div class="stat"><div class="stat-val">${total}</div><div class="stat-label">Gesamt</div></div>
+    <div class="stat"><div class="stat-val" style="color:var(--green)">${uploaded}</div><div class="stat-label">Hochgeladen</div></div>
+    <div class="stat"><div class="stat-val" style="color:var(--red)">${failed}</div><div class="stat-label">Fehler</div></div>
+    ${Object.entries(stats).map(([p, s]) =>
+      `<div class="stat">
+        <div class="stat-val">${Object.values(s).reduce((a,b)=>a+b,0)}</div>
+        <div class="stat-label">${PROVIDER_ICONS[p]||"📦"} ${p}</div>
+       </div>`
+    ).join("")}`;
+}
+
+document.getElementById("btn-run").addEventListener("click", async () => {
+  try {
+    await api("POST", "/api/run");
+    toast("▶ Gestartet!", "ok");
+    setTimeout(loadStats, 1000);
+  } catch(e) { toast(e.message, "err"); }
+});
+
+// ── SETTINGS ───────────────────────────────────────────────────
+async function loadSettings() {
+  const { fields, values } = await api("GET", "/api/settings");
+  const container = document.getElementById("settings-fields");
+  let currentGroup = null;
+  let html = "";
+  for (const f of fields) {
+    if (f.group !== currentGroup) {
+      if (currentGroup) html += `</div>`;
+      currentGroup = f.group;
+      html += `<div class="form-section"><div class="form-section-title">${f.group}</div>`;
+    }
+    const val = (values[f.key] || "").replace(/"/g, "&quot;");
+    if (f.type === "select") {
+      html += `<div class="form-group"><label>${f.label}</label>
+        <select name="${f.key}">${f.options.map(o => `<option value="${o}"${o===val?" selected":""}>${o}</option>`).join("")}</select></div>`;
+    } else {
+      html += `<div class="form-group"><label>${f.label}</label>
+        <input type="${f.type}" name="${f.key}" value="${val}" autocomplete="off"></div>`;
+    }
+  }
+  if (currentGroup) html += `</div>`;
+  container.innerHTML = html;
+}
+
+document.getElementById("settings-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(e.target).entries());
+  try {
+    await api("POST", "/api/settings", { values: data });
+    toast("✓ Gespeichert", "ok");
+  } catch(err) { toast(err.message, "err"); }
+});
+
+// ── PROVIDERS ──────────────────────────────────────────────────
+async function loadProviders() {
+  const { providers } = await api("GET", "/api/providers");
+  const list = document.getElementById("provider-list");
+  if (!providers.length) {
+    list.innerHTML = `<div class="card" style="color:var(--muted);text-align:center;padding:40px">Keine Provider gefunden</div>`;
+    return;
+  }
+  list.innerHTML = providers.map(p => `
+    <div class="provider-card" id="pcard-${p.name}">
+      <div class="provider-icon">${PROVIDER_ICONS[p.name] || "🔌"}</div>
+      <div class="provider-info">
+        <div class="provider-name">${p.name} ${p.custom ? '<span class="badge badge-blue">Custom</span>' : ""}</div>
+        <div class="provider-meta">
+          ${p.tags.map(t => `<span class="tag">${t}</span>`).join(" ")}
+          ${p.correspondent ? `<span class="tag">→ ${p.correspondent}</span>` : ""}
+        </div>
+      </div>
+      <div class="provider-actions">
+        <button class="btn btn-ghost btn-sm" onclick="editProvider('${p.name}','${p.tags.join(",")}','${p.correspondent}')">✏️ Bearbeiten</button>
+        ${p.custom ? `<button class="btn btn-danger btn-sm" onclick="deleteProvider('${p.name}')">🗑</button>` : ""}
+        <label class="toggle">
+          <input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggleProvider('${p.name}', this.checked, '${p.tags.join(",")}', '${p.correspondent}')">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>`).join("");
+}
+
+async function toggleProvider(name, enabled, tagsStr, correspondent) {
+  const tags = tagsStr ? tagsStr.split(",").filter(Boolean) : [];
+  try {
+    await api("PUT", `/api/providers/${name}`, { enabled, tags, correspondent });
+    toast(enabled ? `✓ ${name} aktiviert` : `${name} deaktiviert`, "ok");
+  } catch(e) { toast(e.message, "err"); }
+}
+
+function editProvider(name, tagsStr, correspondent) {
+  const tags = prompt(`Tags für ${name} (kommasepariert):`, tagsStr);
+  if (tags === null) return;
+  const corr = prompt(`Korrespondent für ${name}:`, correspondent);
+  if (corr === null) return;
+  const card = document.getElementById("pcard-" + name);
+  const enabled = card.querySelector("input[type=checkbox]").checked;
+  api("PUT", `/api/providers/${name}`, {
+    enabled, tags: tags.split(",").map(t => t.trim()).filter(Boolean), correspondent: corr
+  }).then(() => { toast("✓ Gespeichert", "ok"); loadProviders(); })
+    .catch(e => toast(e.message, "err"));
+}
+
+async function deleteProvider(name) {
+  if (!confirm(`Provider "${name}" wirklich löschen?`)) return;
+  try {
+    await api("DELETE", `/api/providers/${name}`);
+    toast("🗑 Gelöscht", "ok");
+    loadProviders();
+  } catch(e) { toast(e.message, "err"); }
+}
+
+// Upload
+const zone = document.getElementById("upload-zone");
+const fileInput = document.getElementById("provider-file");
+zone.addEventListener("click", () => fileInput.click());
+zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("drag"); });
+zone.addEventListener("dragleave", () => zone.classList.remove("drag"));
+zone.addEventListener("drop", e => { e.preventDefault(); zone.classList.remove("drag"); uploadFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener("change", () => uploadFile(fileInput.files[0]));
+
+async function uploadFile(file) {
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const r = await fetch("/api/providers/upload", { method: "POST", body: form });
+    if (!r.ok) { const e = await r.json(); throw new Error(e.detail); }
+    const data = await r.json();
+    toast(`✓ Provider "${data.name}" hochgeladen`, "ok");
+    loadProviders();
+  } catch(e) { toast(e.message, "err"); }
+}
+
+// ── LOGS ───────────────────────────────────────────────────────
+async function loadLogs() {
+  const { lines } = await api("GET", "/api/logs");
+  const box = document.getElementById("log-box");
+  box.innerHTML = lines.map(l => {
+    let cls = "";
+    if (/ERROR|✗/.test(l)) cls = "err";
+    else if (/WARNING|WARN/.test(l)) cls = "warn";
+    else if (/✓|INFO.*Fertig|INFO.*hochgeladen/.test(l)) cls = "ok";
+    return `<div class="log-line ${cls}">${l.replace(/</g,"&lt;")}</div>`;
+  }).join("\n") || '<div class="log-line" style="color:var(--muted)">Noch keine Logs</div>';
+  box.scrollTop = box.scrollHeight;
+}
+
+document.getElementById("btn-refresh-logs").addEventListener("click", loadLogs);
+
+let logInterval;
+document.getElementById("auto-refresh-toggle").addEventListener("change", e => {
+  if (e.target.checked) { logInterval = setInterval(loadLogs, 3000); }
+  else { clearInterval(logInterval); }
+});
+logInterval = setInterval(loadLogs, 3000);
+
+// ── Init ───────────────────────────────────────────────────────
+loadStats().then(data => {
+  if (data && data.version) document.getElementById("ver").textContent = "v" + data.version;
+});
+setInterval(loadStats, 5000);
+</script>
+</body>
+</html>

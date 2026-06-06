@@ -1,0 +1,24 @@
+# Environment — NEVER commit credentials
+.env
+
+# Runtime data
+data/
+downloads/
+providers_custom/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
