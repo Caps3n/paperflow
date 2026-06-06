@@ -29,12 +29,23 @@ from app.version import __version__
 
 logger = logging.getLogger("web")
 
-ENV_PATH = Path("/app/config/.env")
-CONFIG_PATH = Path("/app/config/providers.yml")
+ENV_PATH = Path("/app/data/settings.env")  # In data/ – immer persistent
+CONFIG_PATH = Path("/app/data/providers.yml")  # Ebenfalls in data/
+_ENV_LEGACY = Path("/app/config/.env")  # Alter Pfad – Migration
+_CONFIG_LEGACY = Path("/app/config/providers.yml")
 PROVIDERS_DIR = Path("/app/providers_custom")  # Nutzer-Provider
 LOG_PATH = Path("/app/data/fetcher.log")
 
 PROVIDERS_DIR.mkdir(parents=True, exist_ok=True)
+Path("/app/data").mkdir(parents=True, exist_ok=True)
+
+# Migration: alte Dateien aus /app/config/ nach /app/data/ verschieben
+for _src, _dst in [(_ENV_LEGACY, ENV_PATH), (_CONFIG_LEGACY, CONFIG_PATH)]:
+    if _src.exists() and not _dst.exists():
+        import shutil
+
+        shutil.copy2(_src, _dst)
+        logger.info("Migriert: %s → %s", _src, _dst)
 
 app = FastAPI(title="Invoice Fetcher", docs_url=None, redoc_url=None)
 
