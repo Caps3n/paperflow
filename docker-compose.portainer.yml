@@ -3,10 +3,11 @@ version: "3.8"
 services:
   paperflow:
     image: ghcr.io/caps3n/paperflow:latest
+
     container_name: paperflow
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8085:8080"
     volumes:
       - paperflow_data:/app/data
       - paperflow_downloads:/app/downloads
