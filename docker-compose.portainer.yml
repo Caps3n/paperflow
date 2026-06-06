@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  paperflow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: paperflow
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - paperflow_data:/app/data
+      - paperflow_downloads:/app/downloads
+      - paperflow_config:/app/config
+      - paperflow_providers:/app/providers_custom
+    shm_size: "2gb"
+    environment:
+      - PAPERLESS_URL=${PAPERLESS_URL}
+      - PAPERLESS_TOKEN=${PAPERLESS_TOKEN}
+      - AMAZON_EMAIL=${AMAZON_EMAIL}
+      - AMAZON_PASSWORD=${AMAZON_PASSWORD}
+      - AMAZON_DOMAIN=${AMAZON_DOMAIN:-amazon.de}
+      - AMAZON_MONTHS_BACK=${AMAZON_MONTHS_BACK:-12}
+      - RUN_INTERVAL_HOURS=${RUN_INTERVAL_HOURS:-24}
+      - RUN_ON_STARTUP=${RUN_ON_STARTUP:-true}
+
+volumes:
+  paperflow_data:
+  paperflow_downloads:
+  paperflow_config:
+  paperflow_providers:
