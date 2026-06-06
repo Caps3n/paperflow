@@ -222,12 +222,18 @@ class AmazonProvider(BaseProvider):
             }"""
         )
         logger.info(
-            "Nav-Text nach Startseite: %r", already_in[:60] if already_in else ""
+            "Nav-Text nach Startseite: %r", already_in[:80] if already_in else ""
         )
 
-        if already_in and (
-            "hallo" in already_in.lower() or "hello" in already_in.lower()
-        ):
+        # "Hallo, anmelden" = NICHT eingeloggt; "Hallo, Marcel" = eingeloggt
+        is_logged_in = (
+            bool(already_in)
+            and ("hallo" in already_in.lower() or "hello" in already_in.lower())
+            and "anmelden" not in already_in.lower()
+            and "sign in" not in already_in.lower()
+        )
+
+        if is_logged_in:
             logger.info("Amazon: bereits eingeloggt (Cookies)")
             # Zur Bestellseite navigieren
             page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
