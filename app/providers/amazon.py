@@ -125,12 +125,24 @@ class AmazonProvider(BaseProvider):
         except Exception as e:
             logger.warning("Cookies konnten nicht gespeichert werden: %s", e)
 
+    def _is_login_page(self, page: Page) -> bool:
+        """Erkennt ob Amazon zur Login-Seite weitergeleitet hat."""
+        url = page.url
+        return (
+            "ap/signin" in url
+            or "openid.ns" in url
+            or "ap/cvf" in url
+            or "signIn" in url
+        )
+
     def _ensure_logged_in(self, page: Page) -> bool:
         """Prüft Login-Status und führt ggf. Login durch."""
-        page.goto(self.urls["orders"], wait_until="domcontentloaded", timeout=30000)
+        page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
         time.sleep(2)
 
-        if "order-history" in page.url or "your-orders" in page.url:
+        if not self._is_login_page(page) and (
+            "order-history" in page.url or "your-orders" in page.url
+        ):
             logger.info("Amazon: bereits eingeloggt (Cookies)")
             return True
 
@@ -230,7 +242,19 @@ class AmazonProvider(BaseProvider):
         """
         url = f"{self.urls['orders']}?timeFilter={time_filter}"
         page.goto(url, wait_until="networkidle", timeout=45000)
-        time.sleep(3)
+        time.sleep(2)
+
+        # Session-Check: Amazon loggt headless Browser mid-scan manchmal aus
+        if self._is_login_page(page):
+            logger.warning(
+                "Session abgelaufen bei %s – versuche Re-Login...", time_filter
+            )
+            if not self._do_login(page):
+                logger.error("Re-Login fehlgeschlagen – überspringe %s", time_filter)
+                return 0
+            # Nach Login nochmal zur Zielseite
+            page.goto(url, wait_until="networkidle", timeout=45000)
+            time.sleep(2)
 
         found_new = 0
         page_num = 0
