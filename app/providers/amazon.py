@@ -364,24 +364,44 @@ class AmazonProvider(BaseProvider):
         if self._is_login_page(page):
             return False
 
+        logger.info("_navigate_to_filter: aktuelle URL = %s", page.url[-80:])
+
         # Dropdown per Select-Option setzen (wie echter Nutzer)
         try:
             select = page.locator("select#time-filter")
-            if select.count() > 0 and select.first.is_visible(timeout=5000):
+            count = select.count()
+            logger.info("select#time-filter: count=%d", count)
+            if count > 0 and select.first.is_visible(timeout=5000):
+                logger.info("Dropdown sichtbar – setze Option: %s", time_filter)
                 select.first.select_option(value=time_filter)
                 _human_sleep(2, 4)
                 page.wait_for_load_state("networkidle", timeout=30000)
-                logger.debug("Jahresfilter per Dropdown gesetzt: %s", time_filter)
+                logger.info(
+                    "Nach Dropdown-Select: URL=%s | login=%s",
+                    page.url[-80:],
+                    self._is_login_page(page),
+                )
                 return not self._is_login_page(page)
+            else:
+                logger.warning(
+                    "Dropdown nicht sichtbar (count=%d) – versuche URL-Navigation",
+                    count,
+                )
         except Exception as e:
-            logger.debug(
-                "Dropdown-Select fehlgeschlagen (%s), versuche URL-Navigation", e
+            logger.warning(
+                "Dropdown-Select fehlgeschlagen: %s – versuche URL-Navigation", e
             )
 
         # Fallback: direkt per URL
         url = f"{orders_url}?timeFilter={time_filter}"
+        logger.info("URL-Navigation: %s", url[-80:])
         page.goto(url, wait_until="networkidle", timeout=45000)
         _human_sleep(2, 3)
+        logger.info(
+            "Nach URL-Navigation: URL=%s | login=%s",
+            page.url[-80:],
+            self._is_login_page(page),
+        )
         return not self._is_login_page(page)
 
     def _scan_order_filter(
