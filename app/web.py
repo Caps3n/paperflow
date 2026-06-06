@@ -403,6 +403,83 @@ async def reset_amazon_session():
     return {"ok": True}
 
 
+COOKIES_FILE = Path("/app/data/amazon_cookies.json")
+
+
+class CookieImport(BaseModel):
+    cookies: str  # JSON-String aus Cookie-Editor Extension
+
+
+@app.post("/api/amazon/import-cookies")
+async def import_amazon_cookies(body: CookieImport):
+    """Importiert Cookies aus dem echten Browser (Cookie Editor Extension)."""
+    import json as _json
+
+    try:
+        raw = _json.loads(body.cookies)
+    except Exception:
+        raise HTTPException(400, "Ungültiges JSON")
+
+    # Cookie Editor exportiert als Liste von Objekten – Playwright erwartet
+    # dieselbe Struktur, aber nur bestimmte Felder
+    def _normalize(c: dict) -> dict:
+        out: dict = {
+            "name": c.get("name", ""),
+            "value": c.get("value", ""),
+            "domain": c.get("domain", ""),
+            "path": c.get("path", "/"),
+            "secure": bool(c.get("secure", False)),
+            "httpOnly": bool(c.get("httpOnly", False)),
+        }
+        if "sameSite" in c and c["sameSite"] in ("Strict", "Lax", "None"):
+            out["sameSite"] = c["sameSite"]
+        if "expirationDate" in c:
+            out["expires"] = int(c["expirationDate"])
+        elif "expires" in c:
+            out["expires"] = int(c["expires"])
+        return out
+
+    if isinstance(raw, list):
+        cookies = [_normalize(c) for c in raw if isinstance(c, dict)]
+    else:
+        raise HTTPException(400, "Cookies müssen eine Liste sein")
+
+    if not cookies:
+        raise HTTPException(400, "Keine Cookies gefunden")
+
+    COOKIES_FILE.write_text(_json.dumps(cookies))
+    otp_state.login_required = False
+    logger.info("Amazon Cookies importiert: %d Cookies", len(cookies))
+    return {"ok": True, "count": len(cookies)}
+
+
+@app.get("/api/amazon/cookies-status")
+async def get_cookies_status():
+    """Zeigt ob Cookies vorhanden sind und wann sie ablaufen."""
+    import json as _json
+    import time as _time
+
+    if not COOKIES_FILE.exists():
+        return {"loaded": False}
+    try:
+        cookies = _json.loads(COOKIES_FILE.read_text())
+        now = _time.time()
+        # Finde den frühesten Ablauf unter den Session-relevanten Cookies
+        expiries = [
+            c.get("expires", 0)
+            for c in cookies
+            if c.get("expires", 0) > now and "amazon" in c.get("domain", "")
+        ]
+        earliest = min(expiries) if expiries else None
+        return {
+            "loaded": True,
+            "count": len(cookies),
+            "expires": earliest,
+        }
+    except Exception:
+        return {"loaded": False}
+
+
 class OtpSubmit(BaseModel):
     code: str
 
