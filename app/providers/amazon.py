@@ -4,6 +4,12 @@ Amazon Provider – lädt Rechnungen von Amazon.de / Amazon.com herunter.
 Nutzt Playwright (headless Chromium) für Browser-Automation.
 Beim ersten Login: Playwright öffnet den Browser und wartet auf 2FA-Eingabe.
 Danach werden Cookies gespeichert und beim nächsten Lauf wiederverwendet.
+
+PDF-Download-Strategie (gelernt durch direktes Inspizieren von amazon.de):
+  Auf der Bestellübersicht gibt es pro Bestellung ein "Rechnung ▼" Dropdown.
+  Nach dem Klick erscheint ein direkter Link:
+    https://www.amazon.de/documents/download/{UUID}/invoice.pdf
+  Dieser wird direkt heruntergeladen – kein Print-Dialog, kein Seitenrendering.
 """
 
 from __future__ import annotations
@@ -42,12 +48,15 @@ class AmazonProvider(BaseProvider):
         },
     }
 
+    # Amazon Bestellnummer-Muster: 3 Gruppen à 3-7-7 Ziffern
+    ORDER_ID_RE = re.compile(r"\b(\d{3}-\d{7}-\d{7})\b")
+
     def __init__(self, config: dict):
         super().__init__(config)
         self.email = os.environ["AMAZON_EMAIL"]
         self.password = os.environ["AMAZON_PASSWORD"]
         self.domain = os.environ.get("AMAZON_DOMAIN", "amazon.de")
-        self.months_back = int(os.environ.get("AMAZON_MONTHS_BACK", "12"))
+        self.start_year = int(os.environ.get("AMAZON_START_YEAR", "2009"))
         self.urls = self.DOMAINS.get(self.domain, self.DOMAINS["amazon.de"])
 
     # ──────────────────────────────────────────────────────────────
@@ -68,11 +77,13 @@ class AmazonProvider(BaseProvider):
                     return []
 
                 self._save_cookies(context)
-                order_ids = self._get_order_ids(page)
-                logger.info("Gefundene Bestellungen: %d", len(order_ids))
 
-                for order_id in order_ids:
-                    invoice = self._download_invoice(page, order_id)
+                # Bestellungen + direkte PDF-URLs aus dem "Rechnung ▼" Dropdown holen
+                invoice_map = self._get_invoice_map(page)
+                logger.info("Rechnungen gefunden: %d", len(invoice_map))
+
+                for order_id, pdf_url in invoice_map.items():
+                    invoice = self._download_pdf(page, order_id, pdf_url)
                     if invoice:
                         invoices.append(invoice)
 
@@ -119,18 +130,15 @@ class AmazonProvider(BaseProvider):
         page.goto(self.urls["orders"], wait_until="domcontentloaded", timeout=30000)
         time.sleep(2)
 
-        # Schon eingeloggt?
         if "order-history" in page.url or "your-orders" in page.url:
             logger.info("Amazon: bereits eingeloggt (Cookies)")
             return True
 
-        # Login durchführen
         logger.info("Amazon: Login notwendig...")
         return self._do_login(page)
 
     def _do_login(self, page: Page) -> bool:
         try:
-            # E-Mail eingeben
             page.goto(
                 f"{self.urls['login']}?returnTo={self.urls['orders']}",
                 wait_until="domcontentloaded",
@@ -138,19 +146,16 @@ class AmazonProvider(BaseProvider):
             )
             time.sleep(1)
 
-            email_field = page.locator("#ap_email")
-            email_field.fill(self.email)
+            page.locator("#ap_email").fill(self.email)
             page.locator("#continue").click()
             time.sleep(1)
 
-            # Passwort eingeben
             page.locator("#ap_password").fill(self.password)
             page.locator("#signInSubmit").click()
             time.sleep(3)
 
-            # 2FA / OTP Check (SMS oder App)
+            # 2FA / OTP (SMS oder Authenticator)
             if page.locator("#auth-mfa-otpcode").is_visible():
-                # Zuerst aus Umgebungsvariable versuchen, sonst Web-UI abwarten
                 otp = os.environ.get("AMAZON_OTP_CODE", "")
                 if not otp:
                     logger.warning(
@@ -159,7 +164,6 @@ class AmazonProvider(BaseProvider):
                     otp = otp_state.request_otp(timeout=300)
                 if otp:
                     page.locator("#auth-mfa-otpcode").fill(otp)
-                    # "Dieses Gerät merken" anklicken damit Cookies dauerhaft gelten
                     remember = page.locator("#auth-rememberme-checkbox")
                     if remember.is_visible():
                         remember.check()
@@ -169,14 +173,13 @@ class AmazonProvider(BaseProvider):
                     logger.error("Kein OTP eingegeben – Login abgebrochen")
                     return False
 
-            # Prüfe ob Login erfolgreich
             page.goto(self.urls["orders"], wait_until="domcontentloaded", timeout=30000)
             time.sleep(2)
             if "order-history" in page.url or "your-orders" in page.url:
                 logger.info("Amazon Login erfolgreich!")
                 return True
 
-            logger.error("Amazon Login fehlgeschlagen. Aktuelle URL: %s", page.url)
+            logger.error("Login fehlgeschlagen. URL: %s", page.url)
             return False
 
         except Exception as e:
@@ -184,89 +187,134 @@ class AmazonProvider(BaseProvider):
             return False
 
     # ──────────────────────────────────────────────────────────────
-    # Bestellungen finden
+    # Rechnungs-URLs aus "Rechnung ▼" Dropdown holen
     # ──────────────────────────────────────────────────────────────
 
-    # Amazon order ID pattern: 3 groups of digits separated by dashes
-    ORDER_ID_RE = re.compile(r"\b(\d{3}-\d{7}-\d{7})\b")
+    def _get_invoice_map(self, page: Page) -> dict[str, str]:
+        """
+        Iteriert durch alle Jahre seit AMAZON_START_YEAR und sammelt pro Bestellung
+        den direkten PDF-Link aus dem "Rechnung ▼" Dropdown.
+        Gibt {order_id: pdf_url} zurück.
 
-    def _get_order_ids(self, page: Page) -> list[str]:
-        """Liest alle Bestellnummern der letzten N Monate."""
-        order_ids: list[str] = []
-        # Zeitraum-Filter setzen
-        page.goto(
-            f"{self.urls['orders']}?orderFilter=months-{min(self.months_back, 6)}",
-            wait_until="domcontentloaded",
-            timeout=30000,
+        Amazon-URL-Parameter (verifiziert durch Inspektion auf amazon.de):
+          ?timeFilter=year-2024  (nicht orderFilter!)
+          ?timeFilter=months-3
+          ?timeFilter=last30
+        Für eine vollständige Historie wird Jahr für Jahr abgefragt.
+        """
+        import datetime
+
+        result: dict[str, str] = {}
+        current_year = datetime.date.today().year
+
+        years = list(range(current_year, self.start_year - 1, -1))
+        logger.info(
+            "Scanne %d Jahre (%d–%d)...", len(years), self.start_year, current_year
         )
+
+        for year in years:
+            time_filter = f"year-{year}"
+            found = self._scan_order_filter(page, time_filter, result)
+            logger.info(
+                "Jahr %d: %d neue Rechnungen (gesamt: %d)", year, found, len(result)
+            )
+
+        return result
+
+    def _scan_order_filter(
+        self, page: Page, time_filter: str, result: dict[str, str]
+    ) -> int:
+        """
+        Lädt eine gefilterte Bestellliste und sammelt alle PDF-Links durch
+        Klick auf "Rechnung ▼" Dropdowns. Paginiert automatisch.
+        Gibt die Anzahl neu gefundener Rechnungen zurück.
+        """
+        url = f"{self.urls['orders']}?timeFilter={time_filter}"
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
         time.sleep(3)
 
+        found_new = 0
         page_num = 0
+
         while True:
             page_num += 1
-            logger.debug("Scanne Bestellseite %d (URL: %s)...", page_num, page.url)
 
-            # Variante 1: CSS-Selektoren
-            found_via_css: list[str] = []
-            for selector in [
-                ".yohtmlc-order-id span:last-child",
-                "[class*='order-id'] span[dir='ltr']",
-                "[class*='order-id'] bdi",
-                ".a-fixed-right-grid-inner .a-col-left .a-row:first-child span:last-child",
-            ]:
-                texts = page.locator(selector).all_inner_texts()
-                for t in texts:
-                    t = t.strip()
-                    if self.ORDER_ID_RE.match(t) and t not in found_via_css:
-                        found_via_css.append(t)
-                if found_via_css:
-                    break
+            triggers = page.locator(
+                "span.a-declarative:has-text('Rechnung'), "
+                ".order-header__header-list-item:has-text('Rechnung') .a-declarative"
+            )
+            count = triggers.count()
 
-            # Variante 2: Regex über gesamten Seiteninhalt (Fallback)
-            found_via_regex: list[str] = []
-            if not found_via_css:
-                content = page.content()
-                found_via_regex = list(dict.fromkeys(self.ORDER_ID_RE.findall(content)))
-                if found_via_regex:
-                    logger.debug(
-                        "Order-IDs via Regex gefunden: %d", len(found_via_regex)
+            if count == 0:
+                logger.debug(
+                    "Keine Rechnung-Buttons auf Seite %d (%s)", page_num, time_filter
+                )
+                break
+
+            for i in range(count):
+                try:
+                    trigger = triggers.nth(i)
+
+                    # Bestellnummer aus der umgebenden Bestellkarte lesen
+                    order_id = page.evaluate(
+                        """el => {
+                            const card = el.closest('.order-card, [class*="order-card"], .a-box-group');
+                            const m = card ? card.innerHTML.match(/\\d{3}-\\d{7}-\\d{7}/) : null;
+                            return m ? m[0] : null;
+                        }""",
+                        trigger.element_handle(),
                     )
 
-            new_ids = found_via_css or found_via_regex
-            for oid in new_ids:
-                if oid not in order_ids:
-                    order_ids.append(oid)
+                    if not order_id or order_id in result:
+                        continue
 
-            logger.info(
-                "Seite %d: %d Bestellungen gefunden (gesamt: %d)",
-                page_num,
-                len(new_ids),
-                len(order_ids),
-            )
+                    # Dropdown öffnen
+                    trigger.click()
+                    time.sleep(0.8)
+
+                    # Direkte PDF-URL aus dem Dropdown lesen
+                    pdf_link = page.locator(
+                        "a[href*='documents/download'][href*='invoice.pdf']"
+                    ).first
+                    if pdf_link.is_visible(timeout=2000):
+                        href = pdf_link.get_attribute("href")
+                        if href:
+                            result[order_id] = href
+                            found_new += 1
+                            logger.debug("PDF: %s → %s", order_id, href[:60])
+
+                    # Dropdown schließen
+                    page.keyboard.press("Escape")
+                    time.sleep(0.3)
+
+                except Exception as e:
+                    logger.debug("Fehler bei Trigger %d: %s", i, e)
+                    page.keyboard.press("Escape")
+                    time.sleep(0.3)
 
             # Nächste Seite?
             next_btn = page.locator("ul.a-pagination li.a-last a")
             if next_btn.count() == 0 or not next_btn.is_visible():
                 break
-
             next_btn.click()
             time.sleep(2)
 
-            if page_num > 20:
+            if page_num > 50:
+                logger.warning("Seitenlimit (50) erreicht für %s", time_filter)
                 break
 
-        return order_ids
+        return found_new
 
     # ──────────────────────────────────────────────────────────────
-    # Rechnungs-Download
+    # PDF direkt herunterladen
     # ──────────────────────────────────────────────────────────────
 
-    def _download_invoice(self, page: Page, order_id: str) -> Invoice | None:
-        """Öffnet die Rechnungsseite und lädt das PDF herunter."""
+    def _download_pdf(self, page: Page, order_id: str, pdf_url: str) -> Invoice | None:
+        """Lädt das PDF direkt über die authentifizierte Session herunter."""
         output_path = self.download_dir / f"amazon_{order_id}.pdf"
 
-        if output_path.exists():
-            logger.debug("Bereits heruntergeladen: %s", order_id)
+        if output_path.exists() and output_path.stat().st_size > 1000:
+            logger.debug("Bereits vorhanden: %s", order_id)
             return Invoice(
                 invoice_id=order_id,
                 file_path=output_path,
@@ -274,37 +322,31 @@ class AmazonProvider(BaseProvider):
             )
 
         try:
-            # Rechnungs-URL
-            invoice_url = (
-                f"{self.urls['base']}/gp/css/summary/print.html?orderID={order_id}"
-            )
-            page.goto(invoice_url, wait_until="domcontentloaded", timeout=30000)
-            time.sleep(1)
-
-            # PDF via Browser-Druck generieren
-            page.pdf(
-                path=str(output_path),
-                format="A4",
-                margin={
-                    "top": "10mm",
-                    "bottom": "10mm",
-                    "left": "10mm",
-                    "right": "10mm",
-                },
-                print_background=True,
-            )
-
-            if output_path.exists() and output_path.stat().st_size > 1000:
-                logger.info("✓ Rechnung heruntergeladen: %s", order_id)
-                return Invoice(
-                    invoice_id=order_id,
-                    file_path=output_path,
-                    title=f"Amazon Rechnung {order_id}",
-                )
+            # PDF-URL direkt aufrufen – Playwright hat die Session-Cookies
+            response = page.goto(pdf_url, wait_until="load", timeout=30000)
+            if response and response.ok:
+                pdf_bytes = response.body()
+                if len(pdf_bytes) > 1000:
+                    output_path.write_bytes(pdf_bytes)
+                    logger.info(
+                        "✓ PDF heruntergeladen: %s (%d KB)",
+                        order_id,
+                        len(pdf_bytes) // 1024,
+                    )
+                    return Invoice(
+                        invoice_id=order_id,
+                        file_path=output_path,
+                        title=f"Amazon Rechnung {order_id}",
+                    )
+                else:
+                    logger.warning(
+                        "PDF für %s zu klein (%d bytes)", order_id, len(pdf_bytes)
+                    )
             else:
-                logger.warning("PDF für %s scheint leer", order_id)
-                return None
-
+                logger.warning(
+                    "HTTP %s für %s", response.status if response else "?", order_id
+                )
         except Exception as e:
-            logger.error("Fehler beim Download von %s: %s", order_id, e)
-            return None
+            logger.error("Download fehlgeschlagen %s: %s", order_id, e)
+
+        return None
