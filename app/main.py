@@ -35,8 +35,9 @@ load_dotenv()  # lokale .env für Entwicklung
 LOG_PATH = Path("/app/data/fetcher.log")
 LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-_fmt = logging.Formatter("%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-                          datefmt="%Y-%m-%d %H:%M:%S")
+_fmt = logging.Formatter(
+    "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+)
 _file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
 _file_handler.setFormatter(_fmt)
 _stream_handler = logging.StreamHandler(sys.stdout)
@@ -50,6 +51,7 @@ CUSTOM_PROVIDERS_DIR = Path("/app/providers_custom")
 
 
 # ── Provider-Loader ────────────────────────────────────────────────────────────
+
 
 def load_providers(config: dict) -> list[BaseProvider]:
     """Lädt alle in providers.yml aktivierten Provider dynamisch.
@@ -87,6 +89,7 @@ def load_providers(config: dict) -> list[BaseProvider]:
 
 # ── Haupt-Workflow ─────────────────────────────────────────────────────────────
 
+
 def run_once() -> None:
     """Ein kompletter Durchlauf: alle Provider → Download → Upload."""
     logger.info("=" * 60)
@@ -116,7 +119,9 @@ def run_once() -> None:
     total_new = 0
 
     for provider in providers:
-        logger.info("── Provider: %s ──────────────────────────", provider.provider_name)
+        logger.info(
+            "── Provider: %s ──────────────────────────", provider.provider_name
+        )
         try:
             invoices: list[Invoice] = provider.fetch_invoices()
         except Exception as e:
@@ -169,6 +174,7 @@ def run_once() -> None:
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
+
 def _scheduler_loop(interval_hours: int) -> None:
     """Läuft in einem eigenen Thread – prüft jede Minute ob ein Job fällig ist."""
     schedule.every(interval_hours).hours.do(run_once)
@@ -199,6 +205,7 @@ def main() -> None:
 
     # Web-Server (blockiert Hauptthread)
     from app.web import app as web_app
+
     uvicorn.run(web_app, host="0.0.0.0", port=8080, log_level="warning")
 
 

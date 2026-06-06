@@ -17,9 +17,11 @@ class PaperlessClient:
         self.base_url = os.environ["PAPERLESS_URL"].rstrip("/")
         self.token = os.environ["PAPERLESS_TOKEN"]
         self.session = requests.Session()
-        self.session.headers.update({
-            "Authorization": f"Token {self.token}",
-        })
+        self.session.headers.update(
+            {
+                "Authorization": f"Token {self.token}",
+            }
+        )
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}/api/{path.lstrip('/')}"
@@ -88,7 +90,9 @@ class PaperlessClient:
                 r.raise_for_status()
                 # Paperless gibt die Task-ID zurück, nicht direkt die Dokument-ID
                 task_id = r.text.strip().strip('"')
-                logger.info("Dokument hochgeladen, Task-ID: %s (%s)", task_id, file_path.name)
+                logger.info(
+                    "Dokument hochgeladen, Task-ID: %s (%s)", task_id, file_path.name
+                )
                 # Wir geben task_id als String zurück (wird in DB gespeichert)
                 return task_id
             except requests.HTTPError as e:

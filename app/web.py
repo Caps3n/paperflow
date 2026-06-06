@@ -29,23 +29,24 @@ from app.version import __version__
 
 logger = logging.getLogger("web")
 
-ENV_PATH     = Path("/app/config/.env")
-CONFIG_PATH  = Path("/app/config/providers.yml")
-PROVIDERS_DIR = Path("/app/providers_custom")   # Nutzer-Provider
-LOG_PATH     = Path("/app/data/fetcher.log")
+ENV_PATH = Path("/app/config/.env")
+CONFIG_PATH = Path("/app/config/providers.yml")
+PROVIDERS_DIR = Path("/app/providers_custom")  # Nutzer-Provider
+LOG_PATH = Path("/app/data/fetcher.log")
 
 PROVIDERS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Invoice Fetcher", docs_url=None, redoc_url=None)
 
 # ── Hintergrund-Job-State ──────────────────────────────────────────────────────
-_run_lock   = threading.Lock()
-_last_run   = {"time": None, "status": None}
+_run_lock = threading.Lock()
+_last_run = {"time": None, "status": None}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  UI
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 @app.get("/", response_class=HTMLResponse)
 async def ui():
@@ -56,6 +57,7 @@ async def ui():
 # ══════════════════════════════════════════════════════════════════════════════
 #  API – Dashboard / Stats
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 @app.get("/api/stats")
 async def get_stats():
@@ -72,6 +74,7 @@ async def get_stats():
 #  API – Manueller Start
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 @app.post("/api/run")
 async def trigger_run():
     if _run_lock.locked():
@@ -84,6 +87,7 @@ async def trigger_run():
             try:
                 # Import hier um zirkuläre Imports zu vermeiden
                 from app.main import run_once
+
                 run_once()
                 _last_run["status"] = "ok"
             except Exception as e:
@@ -100,17 +104,57 @@ async def trigger_run():
 
 # Felder die im UI angezeigt werden (Reihenfolge + Metadaten)
 ENV_FIELDS = [
-    {"key": "PAPERLESS_URL",       "label": "Paperless URL",        "type": "text",     "group": "Paperless-NGX"},
-    {"key": "PAPERLESS_TOKEN",     "label": "API Token",            "type": "password", "group": "Paperless-NGX"},
-    {"key": "AMAZON_EMAIL",        "label": "E-Mail",               "type": "email",    "group": "Amazon"},
-    {"key": "AMAZON_PASSWORD",     "label": "Passwort",             "type": "password", "group": "Amazon"},
-    {"key": "AMAZON_DOMAIN",       "label": "Domain",               "type": "select",   "group": "Amazon",
-     "options": ["amazon.de", "amazon.com"]},
-    {"key": "AMAZON_MONTHS_BACK",  "label": "Monate zurück",        "type": "number",   "group": "Amazon"},
-    {"key": "AMAZON_OTP_CODE",     "label": "2FA OTP (einmalig)",   "type": "text",     "group": "Amazon"},
-    {"key": "RUN_INTERVAL_HOURS",  "label": "Intervall (Stunden)",  "type": "number",   "group": "Allgemein"},
-    {"key": "RUN_ON_STARTUP",      "label": "Beim Start ausführen", "type": "select",   "group": "Allgemein",
-     "options": ["true", "false"]},
+    {
+        "key": "PAPERLESS_URL",
+        "label": "Paperless URL",
+        "type": "text",
+        "group": "Paperless-NGX",
+    },
+    {
+        "key": "PAPERLESS_TOKEN",
+        "label": "API Token",
+        "type": "password",
+        "group": "Paperless-NGX",
+    },
+    {"key": "AMAZON_EMAIL", "label": "E-Mail", "type": "email", "group": "Amazon"},
+    {
+        "key": "AMAZON_PASSWORD",
+        "label": "Passwort",
+        "type": "password",
+        "group": "Amazon",
+    },
+    {
+        "key": "AMAZON_DOMAIN",
+        "label": "Domain",
+        "type": "select",
+        "group": "Amazon",
+        "options": ["amazon.de", "amazon.com"],
+    },
+    {
+        "key": "AMAZON_MONTHS_BACK",
+        "label": "Monate zurück",
+        "type": "number",
+        "group": "Amazon",
+    },
+    {
+        "key": "AMAZON_OTP_CODE",
+        "label": "2FA OTP (einmalig)",
+        "type": "text",
+        "group": "Amazon",
+    },
+    {
+        "key": "RUN_INTERVAL_HOURS",
+        "label": "Intervall (Stunden)",
+        "type": "number",
+        "group": "Allgemein",
+    },
+    {
+        "key": "RUN_ON_STARTUP",
+        "label": "Beim Start ausführen",
+        "type": "select",
+        "group": "Allgemein",
+        "options": ["true", "false"],
+    },
 ]
 
 
@@ -172,6 +216,7 @@ async def save_settings(body: SettingsSave):
 #  API – Provider
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _read_config() -> dict:
     if CONFIG_PATH.exists():
         return yaml.safe_load(CONFIG_PATH.read_text()) or {}
@@ -185,9 +230,12 @@ def _write_config(cfg: dict) -> None:
 
 def _list_provider_files() -> list[str]:
     """Alle .py Dateien in app/providers/ und providers_custom/"""
-    built_in = [p.stem for p in (Path(__file__).parent / "providers").glob("*.py")
-                if p.stem not in ("__init__",)]
-    custom   = [p.stem for p in PROVIDERS_DIR.glob("*.py")]
+    built_in = [
+        p.stem
+        for p in (Path(__file__).parent / "providers").glob("*.py")
+        if p.stem not in ("__init__",)
+    ]
+    custom = [p.stem for p in PROVIDERS_DIR.glob("*.py")]
     return built_in + custom
 
 
@@ -199,13 +247,15 @@ async def list_providers():
     result = []
     for name in available:
         pc = provider_cfgs.get(name, {})
-        result.append({
-            "name": name,
-            "enabled": pc.get("enabled", False),
-            "tags": pc.get("tags", []),
-            "correspondent": pc.get("correspondent", ""),
-            "custom": name in [p.stem for p in PROVIDERS_DIR.glob("*.py")],
-        })
+        result.append(
+            {
+                "name": name,
+                "enabled": pc.get("enabled", False),
+                "tags": pc.get("tags", []),
+                "correspondent": pc.get("correspondent", ""),
+                "custom": name in [p.stem for p in PROVIDERS_DIR.glob("*.py")],
+            }
+        )
     return {"providers": result}
 
 
@@ -258,8 +308,7 @@ async def upload_provider(file: UploadFile = File(...)):
     # Basis-Validierung: Muss BaseProvider importieren und fetch_invoices haben
     if "BaseProvider" not in text:
         raise HTTPException(
-            400,
-            "Provider muss 'from app.providers import BaseProvider' importieren"
+            400, "Provider muss 'from app.providers import BaseProvider' importieren"
         )
     if "fetch_invoices" not in text:
         raise HTTPException(400, "Provider muss 'fetch_invoices()' implementieren")
@@ -284,6 +333,7 @@ async def upload_provider(file: UploadFile = File(...)):
 # ══════════════════════════════════════════════════════════════════════════════
 #  API – Logs
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 @app.get("/api/logs")
 async def get_logs(lines: int = 200):

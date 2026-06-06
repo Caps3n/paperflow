@@ -15,6 +15,7 @@ from pathlib import Path
 @dataclass
 class Invoice:
     """Repräsentiert eine heruntergeladene Rechnung."""
+
     # Eindeutige ID des Providers (z.B. Bestellnummer)
     invoice_id: str
     # Lokaler Dateipfad der heruntergeladenen PDF
