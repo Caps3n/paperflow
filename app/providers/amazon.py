@@ -183,8 +183,6 @@ class AmazonProvider(BaseProvider):
     def _get_order_ids(self, page: Page) -> list[str]:
         """Liest alle Bestellnummern der letzten N Monate."""
         order_ids: list[str] = []
-        cutoff = datetime.now() - timedelta(days=self.months_back * 30)
-
         # Zeitraum-Filter setzen
         page.goto(
             f"{self.urls['orders']}?orderFilter=months-{min(self.months_back, 6)}",
