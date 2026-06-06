@@ -1,15 +1,13 @@
 """
 Amazon Provider – lädt Rechnungen von Amazon.de / Amazon.com herunter.
 
-Nutzt Playwright (headless Chromium) für Browser-Automation.
-Beim ersten Login: Playwright öffnet den Browser und wartet auf 2FA-Eingabe.
-Danach werden Cookies gespeichert und beim nächsten Lauf wiederverwendet.
+Nutzt Playwright (headless Chromium) + playwright-stealth für Browser-Automation.
+playwright-stealth patcht alle bekannten Bot-Erkennungs-Vektoren (navigator.webdriver,
+plugins, WebGL, canvas, etc.) damit Amazon eine echte Browser-Session vergibt.
 
-PDF-Download-Strategie (gelernt durch direktes Inspizieren von amazon.de):
-  Auf der Bestellübersicht gibt es pro Bestellung ein "Rechnung ▼" Dropdown.
-  Nach dem Klick erscheint ein direkter Link:
-    https://www.amazon.de/documents/download/{UUID}/invoice.pdf
-  Dieser wird direkt heruntergeladen – kein Print-Dialog, kein Seitenrendering.
+Virtual Authenticator (CDP) verhindert Passkey/FIDO-Dialoge beim Login.
+Jahresfilter wird per Dropdown-Select gesetzt (nicht per URL-Parameter) –
+genau wie ein echter Nutzer es tun würde.
 """
 
 from __future__ import annotations
@@ -17,12 +15,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
 import time
-
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
+from playwright_stealth import Stealth
 
 from app import otp_state
 from app.providers import BaseProvider, Invoice
@@ -30,6 +29,14 @@ from app.providers import BaseProvider, Invoice
 logger = logging.getLogger("provider.amazon")
 
 COOKIES_FILE = Path("/app/data/amazon_cookies.json")
+
+# Stealth-Instanz einmalig erstellen
+_STEALTH = Stealth()
+
+
+def _human_sleep(min_s: float = 2.0, max_s: float = 5.0) -> None:
+    """Zufällige Pause wie ein echter Mensch."""
+    time.sleep(random.uniform(min_s, max_s))
 
 
 class AmazonProvider(BaseProvider):
@@ -70,13 +77,19 @@ class AmazonProvider(BaseProvider):
             browser = p.chromium.launch(
                 headless=True,
                 args=[
-                    "--disable-blink-features=AutomationControlled",
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
                 ],
             )
             context = self._create_context(browser)
             page = context.new_page()
+
+            # Stealth auf die Page anwenden – patcht alle Bot-Erkennungs-Vektoren
+            _STEALTH.apply_stealth_sync(page)
+
+            # Virtual Authenticator via CDP – verhindert Passkey/FIDO-Dialoge
+            self._setup_virtual_authenticator(page)
 
             try:
                 if not self._ensure_logged_in(page):
@@ -105,6 +118,29 @@ class AmazonProvider(BaseProvider):
     # Login & Session
     # ──────────────────────────────────────────────────────────────
 
+    def _setup_virtual_authenticator(self, page: Page) -> None:
+        """Registriert einen virtuellen FIDO-Authenticator via CDP.
+        Verhindert, dass Amazon einen Passkey-Dialog zeigt der die Automation blockiert."""
+        try:
+            client = page.context.new_cdp_session(page)
+            client.send("WebAuthn.enable")
+            client.send(
+                "WebAuthn.addVirtualAuthenticator",
+                {
+                    "options": {
+                        "protocol": "ctap2",
+                        "transport": "internal",
+                        "hasResidentKey": True,
+                        "hasUserVerification": True,
+                        "isUserVerified": True,
+                        "automaticPresenceSimulation": True,
+                    }
+                },
+            )
+            logger.debug("Virtual Authenticator konfiguriert")
+        except Exception as e:
+            logger.warning("Virtual Authenticator konnte nicht gesetzt werden: %s", e)
+
     def _create_context(self, browser: Browser) -> BrowserContext:
         context = browser.new_context(
             user_agent=(
@@ -115,10 +151,6 @@ class AmazonProvider(BaseProvider):
             accept_downloads=True,
             locale="de-DE",
             viewport={"width": 1280, "height": 900},
-        )
-        # Webdriver-Flag entfernen damit Amazon uns nicht als Bot erkennt
-        context.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
         if COOKIES_FILE.exists():
             try:
@@ -150,12 +182,10 @@ class AmazonProvider(BaseProvider):
     def _ensure_logged_in(self, page: Page) -> bool:
         """Prüft Login-Status und führt ggf. Login durch."""
         page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
-        time.sleep(2)
+        _human_sleep(2, 3)
 
         if not self._is_login_page(page) and (
-            "order-history" in page.url
-            or "your-orders" in page.url
-            or "/orders" in page.url
+            "your-orders" in page.url or "/orders" in page.url
         ):
             logger.info("Amazon: bereits eingeloggt (Cookies)")
             return True
@@ -169,132 +199,117 @@ class AmazonProvider(BaseProvider):
     def _do_login(self, page: Page) -> bool:
         try:
             # Zur Bestellseite – Amazon leitet selbst zur Login-Seite weiter
-            # (mit allen nötigen OpenID-Parametern)
             page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
-            time.sleep(3)
+            _human_sleep(2, 4)
 
             # Falls schon eingeloggt
             if not self._is_login_page(page):
-                logger.info("Bereits eingeloggt nach _do_login – kein Login nötig")
+                logger.info("Bereits eingeloggt – kein Login nötig")
                 return True
 
             logger.info("Login-Seite erkannt: %s", page.url[-120:])
 
-            # Diagnose: was zeigt Amazon wirklich?
-            diag = page.evaluate(
-                """() => ({
-                    title: document.title,
-                    emailVisible: !!document.querySelector('#ap_email'),
-                    captcha: !!document.querySelector('#captchacharacters, .a-box-inner img[src*="captcha"]'),
-                    bodySnippet: document.body.innerText.substring(0, 400)
-                })"""
-            )
-            logger.info(
-                "Login-Diagnose: title=%r | #ap_email=%s | captcha=%s",
-                diag.get("title"),
-                diag.get("emailVisible"),
-                diag.get("captcha"),
-            )
-            if not diag.get("emailVisible"):
-                logger.warning("Seiteninhalt:\n%s", diag.get("bodySnippet", "")[:300])
-                # Screenshot für Debugging
+            # Screenshot für Debugging
+            try:
+                page.screenshot(path="/app/data/login_debug.png")
+                logger.info("Debug-Screenshot gespeichert: /app/data/login_debug.png")
+            except Exception:
+                pass
+
+            # E-Mail eintippen (mit Stealth funktioniert normales fill())
+            email_field = page.locator(
+                '#ap_email, input[name="email"], input[type="email"]'
+            ).first
+            email_field.fill(self.email)
+            _human_sleep(0.5, 1.5)
+
+            # "Weiter" / "Continue" klicken
+            for sel in [
+                "#continue",
+                '[name="continue"]',
+                'input[type="submit"]',
+                'button[type="submit"]',
+            ]:
                 try:
-                    screenshot_path = Path("/app/data/login_debug.png")
-                    page.screenshot(path=str(screenshot_path))
-                    logger.info("Debug-Screenshot: %s", screenshot_path)
+                    btn = page.locator(sel).first
+                    if btn.is_visible(timeout=2000):
+                        btn.click()
+                        break
                 except Exception:
-                    pass
-
-            # E-Mail per JS eintippen (löst React/native Events aus)
-            import json as _json_mod
-
-            page.evaluate(f"""() => {{
-                const sel = '#ap_email, input[name="email"], input[type="email"], input[type="text"], input[type="tel"]';
-                const el = document.querySelector(sel);
-                if (!el) return;
-                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                setter.call(el, {_json_mod.dumps(self.email)});
-                el.dispatchEvent(new Event('input', {{bubbles: true}}));
-                el.dispatchEvent(new Event('change', {{bubbles: true}}));
-                el.dispatchEvent(new Event('blur', {{bubbles: true}}));
-            }}""")
-            time.sleep(0.5)
-
-            # "Weiter" klicken oder Enter drücken
-            cont_els = page.query_selector_all(
-                "#continue, [name='continue'], input[type='submit'], button[type='submit']"
-            )
-            if cont_els:
-                try:
-                    cont_els[0].click()
-                except Exception:
-                    page.keyboard.press("Return")
+                    continue
             else:
                 page.keyboard.press("Return")
 
-            time.sleep(3)
-            page.wait_for_load_state("networkidle")
+            _human_sleep(2, 4)
+            page.wait_for_load_state("networkidle", timeout=30000)
 
-            # Passwort per JS eintippen – umgeht visibility-Anforderung komplett
-            page.evaluate(f"""() => {{
-                const el = document.querySelector('#ap_password, input[name="password"], input[type="password"]');
-                if (!el) return;
-                // Hidden-Attribute entfernen damit Form-Submit funktioniert
-                el.removeAttribute('hidden');
-                el.style.cssText = '';
-                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                setter.call(el, {_json_mod.dumps(self.password)});
-                el.dispatchEvent(new Event('input', {{bubbles: true}}));
-                el.dispatchEvent(new Event('change', {{bubbles: true}}));
-            }}""")
-            time.sleep(0.5)
+            # Passwort eintippen
+            password_field = page.locator(
+                '#ap_password, input[name="password"], input[type="password"]'
+            ).first
+            password_field.fill(self.password)
+            _human_sleep(0.5, 1.5)
 
-            # Submit per JS – kein Playwright-Click nötig
-            page.evaluate("""() => {
-                const btn = document.querySelector('#signInSubmit, input[id="signInSubmit"], [name="signIn"], input[type="submit"], button[type="submit"]');
-                if (btn) { btn.click(); return; }
-                const form = document.querySelector('form[name="signIn"], form');
-                if (form) form.submit();
-            }""")
-            time.sleep(4)
+            # "Anmelden" / "Sign in" klicken
+            for sel in [
+                "#signInSubmit",
+                '[name="signIn"]',
+                'input[type="submit"]',
+                'button[type="submit"]',
+            ]:
+                try:
+                    btn = page.locator(sel).first
+                    if btn.is_visible(timeout=2000):
+                        btn.click()
+                        break
+                except Exception:
+                    continue
+            else:
+                page.keyboard.press("Return")
+
+            _human_sleep(3, 5)
 
             # 2FA / OTP (SMS oder Authenticator) – optional, falls aktiv
-            if page.locator("#auth-mfa-otpcode").is_visible():
-                otp = os.environ.get("AMAZON_OTP_CODE", "")
-                if not otp:
-                    logger.warning(
-                        "⚠️  Amazon verlangt 2FA – warte auf SMS-Code über Web-UI (5 Min)..."
-                    )
-                    otp = otp_state.request_otp(timeout=300)
-                if otp:
-                    page.locator("#auth-mfa-otpcode").fill(otp)
-                    remember = page.locator("#auth-rememberme-checkbox")
-                    if remember.is_visible():
-                        remember.check()
-                    page.locator("#auth-signin-button").click()
-                    time.sleep(3)
-                else:
-                    logger.error("Kein OTP eingegeben – Login abgebrochen")
-                    return False
+            try:
+                if page.locator("#auth-mfa-otpcode").is_visible(timeout=3000):
+                    otp = os.environ.get("AMAZON_OTP_CODE", "")
+                    if not otp:
+                        logger.warning(
+                            "⚠️  Amazon verlangt 2FA – warte auf Code über Web-UI (5 Min)..."
+                        )
+                        otp = otp_state.request_otp(timeout=300)
+                    if otp:
+                        page.locator("#auth-mfa-otpcode").fill(otp)
+                        remember = page.locator("#auth-rememberme-checkbox")
+                        if remember.is_visible(timeout=1000):
+                            remember.check()
+                        page.locator("#auth-signin-button").click()
+                        _human_sleep(3, 5)
+                    else:
+                        logger.error("Kein OTP eingegeben – Login abgebrochen")
+                        return False
+            except Exception:
+                pass  # Kein 2FA nötig
 
-            # "Angemeldet bleiben?" / "Keep me signed in" Dialog
+            # "Angemeldet bleiben?" Dialog
             for keep_sel in ["#remember_me", 'input[name="rememberMe"]']:
                 try:
-                    if page.locator(keep_sel).is_visible():
-                        page.locator(keep_sel).check()
-                        time.sleep(1)
+                    el = page.locator(keep_sel)
+                    if el.is_visible(timeout=2000):
+                        el.check()
+                        _human_sleep(0.5, 1)
                         break
                 except Exception:
                     pass
 
             # Nach Login zur Bestellseite
             page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
-            time.sleep(2)
-            if "order-history" in page.url or "your-orders" in page.url:
+            _human_sleep(2, 3)
+
+            if "your-orders" in page.url or "/orders" in page.url:
                 logger.info("Amazon Login erfolgreich!")
                 return True
 
-            # Nochmal Diagnose falls Login fehlschlug
             logger.error("Login fehlgeschlagen. URL: %s", page.url)
             try:
                 snippet = page.evaluate(
@@ -316,10 +331,7 @@ class AmazonProvider(BaseProvider):
     def _get_invoice_map(self, page: Page) -> dict[str, str]:
         """
         Iteriert durch alle Jahre seit AMAZON_START_YEAR.
-
-        Neue URL: /your-orders/orders?timeFilter=year-X
-        (die alte /gp/your-account/order-history?timeFilter=year-X wurde von Amazon
-        für headless Sessions blockiert – die neue URL funktioniert)
+        Setzt den Jahresfilter per Dropdown-Select (genau wie ein echter Nutzer).
         """
         import datetime
 
@@ -341,13 +353,38 @@ class AmazonProvider(BaseProvider):
 
     def _navigate_to_filter(self, page: Page, time_filter: str) -> bool:
         """
-        Navigiert zur gefilterten Bestellliste.
-        Verwendet die neue Amazon-URL /your-orders/orders?timeFilter=year-X
-        (die alte /gp/your-account/order-history URL wird von Amazon blockiert).
+        Setzt den Jahresfilter per Dropdown-Select – genau wie ein echter Nutzer.
+        Falls nicht auf der Bestellseite, erst dorthin navigieren.
+        Fallback auf URL-Navigation falls kein Dropdown gefunden.
         """
-        url = f"{self.urls['orders']}?timeFilter={time_filter}"
+        orders_url = self.urls["orders"]
+
+        # Falls wir nicht auf der Bestellseite sind, dorthin navigieren
+        if orders_url.split("?")[0] not in page.url:
+            page.goto(orders_url, wait_until="networkidle", timeout=45000)
+            _human_sleep(2, 3)
+
+        if self._is_login_page(page):
+            return False
+
+        # Dropdown per Select-Option setzen (wie echter Nutzer)
+        try:
+            select = page.locator("select#time-filter")
+            if select.count() > 0 and select.first.is_visible(timeout=5000):
+                select.first.select_option(value=time_filter)
+                _human_sleep(2, 4)
+                page.wait_for_load_state("networkidle", timeout=30000)
+                logger.debug("Jahresfilter per Dropdown gesetzt: %s", time_filter)
+                return not self._is_login_page(page)
+        except Exception as e:
+            logger.debug(
+                "Dropdown-Select fehlgeschlagen (%s), versuche URL-Navigation", e
+            )
+
+        # Fallback: direkt per URL
+        url = f"{orders_url}?timeFilter={time_filter}"
         page.goto(url, wait_until="networkidle", timeout=45000)
-        time.sleep(2)
+        _human_sleep(2, 3)
         return not self._is_login_page(page)
 
     def _scan_order_filter(
@@ -358,9 +395,7 @@ class AmazonProvider(BaseProvider):
         und holt per fetch() direkt die PDF-Links – ohne Popup-Klick.
         Paginiert automatisch. Gibt die Anzahl neu gefundener Rechnungen zurück.
         """
-        # Navigiere zur gefilterten Seite (Select-Dropdown bevorzugt)
         if not self._navigate_to_filter(page, time_filter):
-            # Session abgelaufen → re-login
             logger.warning(
                 "Session abgelaufen bei %s – versuche Re-Login...", time_filter
             )
@@ -370,7 +405,6 @@ class AmazonProvider(BaseProvider):
             if not success:
                 logger.error("Re-Login fehlgeschlagen – überspringe %s", time_filter)
                 return 0
-            # Nach Login nochmal zur Zielseite
             if not self._navigate_to_filter(page, time_filter):
                 logger.error(
                     "Nach Re-Login immer noch kein Zugriff auf %s", time_filter
@@ -438,9 +472,7 @@ class AmazonProvider(BaseProvider):
             )
 
             for item in items:
-                order_id = (
-                    item["order_id"] if "order_id" in item else item.get("orderId")
-                )
+                order_id = item.get("orderId") or item.get("order_id")
                 popover_url = item.get("popoverUrl") or item.get("popover_url")
 
                 if not order_id or order_id in result:
@@ -477,7 +509,7 @@ class AmazonProvider(BaseProvider):
             if next_btn.count() == 0 or not next_btn.is_visible():
                 break
             next_btn.click()
-            time.sleep(2)
+            _human_sleep(2, 4)
 
             if page_num > 500:
                 logger.warning("Seitenlimit (500) erreicht für %s", time_filter)
@@ -502,7 +534,6 @@ class AmazonProvider(BaseProvider):
             )
 
         try:
-            # PDF-URL direkt aufrufen – Playwright hat die Session-Cookies
             response = page.goto(pdf_url, wait_until="load", timeout=30000)
             if response and response.ok:
                 pdf_bytes = response.body()
