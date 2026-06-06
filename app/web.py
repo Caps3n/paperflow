@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -404,6 +404,41 @@ async def reset_amazon_session():
 
 
 COOKIES_FILE = Path("/app/data/amazon_cookies.json")
+
+
+@app.post("/api/amazon/cookies-raw")
+async def import_cookies_raw(request: Request):
+    """Empfängt document.cookie String direkt vom Browser (kein CORS-Preflight nötig)."""
+    import json as _json
+
+    body = await request.body()
+    cookie_str = body.decode("utf-8", errors="replace")
+    cookies = []
+    for part in cookie_str.split(";"):
+        part = part.strip()
+        if "=" in part:
+            name, _, value = part.partition("=")
+            cookies.append(
+                {
+                    "name": name.strip(),
+                    "value": value.strip(),
+                    "domain": ".amazon.de",
+                    "path": "/",
+                    "secure": True,
+                    "httpOnly": False,
+                }
+            )
+    if cookies:
+        COOKIES_FILE.write_text(_json.dumps(cookies))
+        otp_state.login_required = False
+        logger.info("Amazon Cookies via Browser-Inject importiert: %d", len(cookies))
+    from fastapi.responses import Response
+
+    return Response(
+        content=_json.dumps({"ok": True, "count": len(cookies)}),
+        media_type="application/json",
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
 
 
 class CookieImport(BaseModel):
