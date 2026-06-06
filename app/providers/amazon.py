@@ -229,8 +229,8 @@ class AmazonProvider(BaseProvider):
         Paginiert automatisch. Gibt die Anzahl neu gefundener Rechnungen zurück.
         """
         url = f"{self.urls['orders']}?timeFilter={time_filter}"
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        time.sleep(2)
+        page.goto(url, wait_until="networkidle", timeout=45000)
+        time.sleep(3)
 
         found_new = 0
         page_num = 0
@@ -238,14 +238,34 @@ class AmazonProvider(BaseProvider):
         while True:
             page_num += 1
 
+            # Diagnose: was ist auf der Seite?
+            diag = page.evaluate(
+                """() => ({
+                    url: location.href,
+                    popoverLinks: document.querySelectorAll('a[href*="invoice/popover"]').length,
+                    orderCards: document.querySelectorAll('.order-card, [class*="order-card"]').length,
+                    bodySnippet: document.body.innerText.substring(0, 300)
+                })"""
+            )
+            logger.info(
+                "Seite %d (%s): URL=%s | popoverLinks=%d | orderCards=%d",
+                page_num,
+                time_filter,
+                diag.get("url", "?")[-60:],
+                diag.get("popoverLinks", 0),
+                diag.get("orderCards", 0),
+            )
+            if diag.get("popoverLinks", 0) == 0:
+                logger.info(
+                    "Seiteninhalt (Anfang): %s", diag.get("bodySnippet", "")[:200]
+                )
+
             # Sammle alle Popover-URLs + Bestellnummern in einem JS-Call
-            # Jede Bestellung hat einen a[href*='invoice/popover'] Link
             items = page.evaluate(
                 """() => {
                     const results = [];
                     const links = document.querySelectorAll('a[href*="invoice/popover"]');
                     for (const a of links) {
-                        // Bestellnummer aus der umgebenden Karte
                         const card = a.closest(
                             '.order-card, [class*="order-card"], .a-box-group, ' +
                             '.order-header, [class*="order"]'
@@ -261,8 +281,10 @@ class AmazonProvider(BaseProvider):
             )
 
             if not items:
-                logger.debug(
-                    "Keine Bestellungen auf Seite %d (%s)", page_num, time_filter
+                logger.info(
+                    "Keine Bestellungen auf Seite %d (%s) – weiter",
+                    page_num,
+                    time_filter,
                 )
                 break
 
