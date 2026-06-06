@@ -168,27 +168,63 @@ class AmazonProvider(BaseProvider):
         try:
             # Zur Bestellseite – Amazon leitet selbst zur Login-Seite weiter
             # (mit allen nötigen OpenID-Parametern)
-            page.goto(self.urls["orders"], wait_until="domcontentloaded", timeout=30000)
-            time.sleep(2)
+            page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
+            time.sleep(3)
 
-            # Falls noch nicht auf Login-Seite, direkt zur signin-Seite
+            # Falls schon eingeloggt
             if not self._is_login_page(page):
                 logger.info("Bereits eingeloggt nach _do_login – kein Login nötig")
                 return True
 
-            logger.info("Login-Seite: %s", page.url[-100:])
+            logger.info("Login-Seite erkannt: %s", page.url[-120:])
 
-            # Warte auf E-Mail-Feld (Amazon Login Step 1)
-            page.wait_for_selector("#ap_email", timeout=20000)
-            page.locator("#ap_email").fill(self.email)
-            page.locator("#continue").click()
-            time.sleep(1)
+            # Diagnose: was zeigt Amazon wirklich?
+            diag = page.evaluate(
+                """() => ({
+                    title: document.title,
+                    emailVisible: !!document.querySelector('#ap_email'),
+                    captcha: !!document.querySelector('#captchacharacters, .a-box-inner img[src*="captcha"]'),
+                    bodySnippet: document.body.innerText.substring(0, 400)
+                })"""
+            )
+            logger.info(
+                "Login-Diagnose: title=%r | #ap_email=%s | captcha=%s",
+                diag.get("title"),
+                diag.get("emailVisible"),
+                diag.get("captcha"),
+            )
+            if not diag.get("emailVisible"):
+                logger.warning("Seiteninhalt:\n%s", diag.get("bodySnippet", "")[:300])
+                # Screenshot für Debugging
+                try:
+                    screenshot_path = Path("/app/data/login_debug.png")
+                    page.screenshot(path=str(screenshot_path))
+                    logger.info("Debug-Screenshot: %s", screenshot_path)
+                except Exception:
+                    pass
 
-            page.locator("#ap_password").fill(self.password)
-            page.locator("#signInSubmit").click()
-            time.sleep(3)
+            # E-Mail-Feld – mehrere mögliche Selektoren
+            email_sel = "#ap_email, input[name='email'], input[type='email']"
+            page.wait_for_selector(email_sel, timeout=30000)
+            page.locator(email_sel).first.fill(self.email)
 
-            # 2FA / OTP (SMS oder Authenticator)
+            # Continue-Button – mehrere mögliche Selektoren
+            cont_sel = "#continue, input[id='continue'], [name='continue']"
+            if page.locator(cont_sel).count() > 0:
+                page.locator(cont_sel).first.click()
+                time.sleep(2)
+
+            # Passwort-Feld
+            pw_sel = "#ap_password, input[name='password'], input[type='password']"
+            page.wait_for_selector(pw_sel, timeout=15000)
+            page.locator(pw_sel).first.fill(self.password)
+
+            # Submit
+            submit_sel = "#signInSubmit, input[id='signInSubmit'], [name='signIn']"
+            page.locator(submit_sel).first.click()
+            time.sleep(4)
+
+            # 2FA / OTP (SMS oder Authenticator) – optional, falls aktiv
             if page.locator("#auth-mfa-otpcode").is_visible():
                 otp = os.environ.get("AMAZON_OTP_CODE", "")
                 if not otp:
@@ -207,13 +243,32 @@ class AmazonProvider(BaseProvider):
                     logger.error("Kein OTP eingegeben – Login abgebrochen")
                     return False
 
-            page.goto(self.urls["orders"], wait_until="domcontentloaded", timeout=30000)
+            # "Angemeldet bleiben?" / "Keep me signed in" Dialog
+            for keep_sel in ["#remember_me", 'input[name="rememberMe"]']:
+                try:
+                    if page.locator(keep_sel).is_visible():
+                        page.locator(keep_sel).check()
+                        time.sleep(1)
+                        break
+                except Exception:
+                    pass
+
+            # Nach Login zur Bestellseite
+            page.goto(self.urls["orders"], wait_until="networkidle", timeout=45000)
             time.sleep(2)
             if "order-history" in page.url or "your-orders" in page.url:
                 logger.info("Amazon Login erfolgreich!")
                 return True
 
+            # Nochmal Diagnose falls Login fehlschlug
             logger.error("Login fehlgeschlagen. URL: %s", page.url)
+            try:
+                snippet = page.evaluate(
+                    "() => document.body.innerText.substring(0, 300)"
+                )
+                logger.error("Seiteninhalt nach Login: %s", snippet)
+            except Exception:
+                pass
             return False
 
         except Exception as e:
