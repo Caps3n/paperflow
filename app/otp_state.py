@@ -39,7 +39,7 @@ def submit_otp(otp: str) -> None:
 
 # ── Login-Status ────────────────────────────────────────────────
 login_required: bool = False  # True wenn Session abgelaufen
-login_running: bool = False   # True während Login läuft
+login_running: bool = False  # True während Login läuft
 _cookies_file_path: str = "/app/data/amazon_cookies.json"
 
 
