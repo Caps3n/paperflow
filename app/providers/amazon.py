@@ -240,8 +240,7 @@ class AmazonProvider(BaseProvider):
         try:
             # Rechnungs-URL
             invoice_url = (
-                f"{self.urls['base']}/gp/css/summary/print.html"
-                f"?orderID={order_id}"
+                f"{self.urls['base']}/gp/css/summary/print.html?orderID={order_id}"
             )
             page.goto(invoice_url, wait_until="domcontentloaded", timeout=30000)
             time.sleep(1)
@@ -250,7 +249,12 @@ class AmazonProvider(BaseProvider):
             page.pdf(
                 path=str(output_path),
                 format="A4",
-                margin={"top": "10mm", "bottom": "10mm", "left": "10mm", "right": "10mm"},
+                margin={
+                    "top": "10mm",
+                    "bottom": "10mm",
+                    "left": "10mm",
+                    "right": "10mm",
+                },
                 print_background=True,
             )
 
