@@ -757,6 +757,9 @@ class AmazonProvider(BaseProvider):
                 )
 
                 if pdf_url:
+                    # Relative URLs zu absoluten machen (z.B. /documents/download/...)
+                    if pdf_url.startswith("/"):
+                        pdf_url = f"{self.urls['base']}{pdf_url}"
                     result[order_id] = pdf_url
                     found_new += 1
                     logger.debug("PDF: %s → %s", order_id, pdf_url[:60])
