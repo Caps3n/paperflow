@@ -29,7 +29,7 @@ from app.providers import BaseProvider, Invoice
 from app.version import __version__
 
 # Anzahl paralleler Upload-Threads (Standard: 3)
-UPLOAD_WORKERS = int(os.environ.get("UPLOAD_WORKERS", "3"))
+UPLOAD_WORKERS = int(os.environ.get("UPLOAD_WORKERS") or "3")
 
 # .env laden – zuerst aus /app/data/settings.env, Fallback auf /app/config/.env
 load_dotenv(Path("/app/data/settings.env"))
