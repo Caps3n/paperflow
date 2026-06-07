@@ -1,31 +1,89 @@
 version: "3.8"
 
-services:
-  paperflow:
-    image: ghcr.io/caps3n/paperflow:latest
+# ═══════════════════════════════════════════════════════════════════
+#  paperflow v1.0.0 – Portainer Stack
+#
+#  Deployment via Portainer → Stacks → Add Stack → Repository:
+#    Repository URL:   https://github.com/Caps3n/paperflow
+#    Compose path:     docker-compose.portainer.yml
+#    Auto-update:      optional aktivieren
+#
+#  Umgebungsvariablen im "Environment variables" Tab setzen:
+#    PAPERLESS_URL      z.B. http://192.168.1.50:8777
+#    PAPERLESS_TOKEN    API-Token aus Paperless Admin
+#    AMAZON_EMAIL       deine Amazon-E-Mail
+#    AMAZON_PASSWORD    dein Amazon-Passwort
+# ═══════════════════════════════════════════════════════════════════
 
-    container_name: paperflow
+services:
+
+  # ─────────────────────────────────────────────────────────────────
+  # Chrome Desktop – echter Browser mit noVNC Web-UI
+  #   Einmalig: http://<server-ip>:6080/vnc.html → Amazon einloggen
+  #   Danach läuft alles automatisch
+  # ─────────────────────────────────────────────────────────────────
+  chrome-desktop:
+    build:
+      context: ./chrome-desktop
+      dockerfile: Dockerfile
+    container_name: chrome-desktop
     restart: unless-stopped
     ports:
-      - "8085:8080"
+      - "6080:6080"       # noVNC Web-UI (einmalig für Login)
     volumes:
-      - paperflow_data:/app/data
-      - paperflow_downloads:/app/downloads
-      - paperflow_config:/app/config
-      - paperflow_providers:/app/providers_custom
-    shm_size: "2gb"
+      - chrome_data:/chrome-data    # Chrome-Profil + Cookies persistent
+    shm_size: "1gb"
+    networks:
+      - paperflow
+
+  # ─────────────────────────────────────────────────────────────────
+  # Invoice Fetcher
+  #   Web-UI: http://<server-ip>:8085
+  # ─────────────────────────────────────────────────────────────────
+  invoice-fetcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: invoice-fetcher
+    restart: unless-stopped
+    depends_on:
+      - chrome-desktop
+    ports:
+      - "8085:8080"       # Web-UI
+    volumes:
+      - paperflow_data:/app/data             # SQLite-DB + Logs + Einstellungen
+      - paperflow_downloads:/app/downloads   # Temporäre PDFs
+      - paperflow_providers:/app/providers_custom  # Eigene Provider
+    shm_size: "512mb"
+    networks:
+      - paperflow
     environment:
-      - PAPERLESS_URL=${PAPERLESS_URL}
+      # Chrome CDP (internes Netzwerk – nicht ändern)
+      - CHROME_CDP_URL=http://chrome-desktop:9222
+
+      # Paperless-NGX
+      - PAPERLESS_URL=${PAPERLESS_URL:-http://192.168.178.37:8777}
       - PAPERLESS_TOKEN=${PAPERLESS_TOKEN}
+
+      # Amazon
       - AMAZON_EMAIL=${AMAZON_EMAIL}
       - AMAZON_PASSWORD=${AMAZON_PASSWORD}
       - AMAZON_DOMAIN=${AMAZON_DOMAIN:-amazon.de}
-      - AMAZON_MONTHS_BACK=${AMAZON_MONTHS_BACK:-12}
+      - AMAZON_START_YEAR=${AMAZON_START_YEAR:-2009}
+      - AMAZON_INCREMENTAL=${AMAZON_INCREMENTAL:-false}
+
+      # Scheduler & Upload
       - RUN_INTERVAL_HOURS=${RUN_INTERVAL_HOURS:-24}
       - RUN_ON_STARTUP=${RUN_ON_STARTUP:-true}
+      - UPLOAD_WORKERS=${UPLOAD_WORKERS:-3}
 
+# ─────────────────────────────────────────────────────────────────
 volumes:
+  chrome_data:
   paperflow_data:
   paperflow_downloads:
-  paperflow_config:
   paperflow_providers:
+
+networks:
+  paperflow:
+    driver: bridge
