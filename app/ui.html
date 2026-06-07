@@ -132,6 +132,22 @@
 
   /* Template hint */
   .code-block { background: #0a0c14; border: 1px solid var(--border); border-radius: 8px; padding: 16px; font-family: monospace; font-size: 12px; line-height: 1.7; color: #a5b4fc; overflow-x: auto; white-space: pre; margin-top: 12px; }
+
+  /* Browser Modal */
+  #browser-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:200; flex-direction:column; }
+  #browser-modal.open { display:flex; }
+  .browser-modal-bar { display:flex; align-items:center; gap:12px; padding:12px 16px; background:var(--surface); border-bottom:1px solid var(--border); flex-shrink:0; }
+  .browser-modal-bar .title { flex:1; font-weight:700; font-size:14px; }
+  .browser-modal-bar .hint { color:var(--muted); font-size:12px; }
+  #browser-frame { flex:1; width:100%; border:none; background:#000; }
+  .btn-green { background:#16a34a; color:#fff; }
+  .btn-green:hover { background:#15803d; }
+
+  /* Recorder */
+  .recorder-card { background:linear-gradient(135deg,rgba(79,142,247,.08),rgba(110,231,183,.05)); border:1px solid var(--accent); border-radius:var(--radius); padding:20px; margin-top:16px; }
+  .recorder-step { display:flex; align-items:flex-start; gap:12px; margin-bottom:14px; }
+  .recorder-step-num { width:24px; height:24px; border-radius:50%; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; flex-shrink:0; margin-top:1px; }
+  .code-editor { background:#0a0c14; border:1px solid var(--border); border-radius:8px; padding:16px; font-family:monospace; font-size:12px; line-height:1.7; color:#a5b4fc; overflow-x:auto; white-space:pre; margin-top:12px; width:100%; min-height:200px; resize:vertical; }
 </style>
 </head>
 <body>
@@ -199,8 +215,57 @@
 
       <div id="provider-list"></div>
 
-      <div class="card" style="margin-top:24px">
-        <div class="card-title">Eigenen Provider hochladen</div>
+      <!-- Recorder Card -->
+      <div class="recorder-card" id="recorder-card">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+          <span style="font-size:20px">🔴</span>
+          <div>
+            <div style="font-weight:700;font-size:15px">Neuen Provider aufnehmen</div>
+            <div style="color:var(--muted);font-size:12px">Browser öffnen → zur Website navigieren → Seite aufnehmen → Template generieren</div>
+          </div>
+          <div class="spacer"></div>
+          <span id="browser-status-badge" class="badge badge-yellow" style="font-size:11px">Browser prüfen…</span>
+        </div>
+
+        <div class="recorder-step">
+          <div class="recorder-step-num">1</div>
+          <div>
+            <div style="font-weight:600;font-size:13px">Browser öffnen</div>
+            <div style="color:var(--muted);font-size:12px;margin-top:2px">Öffne den Desktop-Browser und logge dich beim neuen Provider ein</div>
+            <button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="openBrowser('recorder')">🌐 Browser öffnen</button>
+          </div>
+        </div>
+
+        <div class="recorder-step">
+          <div class="recorder-step-num">2</div>
+          <div>
+            <div style="font-weight:600;font-size:13px">Zur Rechnungsseite navigieren</div>
+            <div style="color:var(--muted);font-size:12px;margin-top:2px">Gehe zu der Seite, auf der die Rechnungen/PDFs sind</div>
+          </div>
+        </div>
+
+        <div class="recorder-step">
+          <div class="recorder-step-num">3</div>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:13px">Seite aufnehmen</div>
+            <div style="color:var(--muted);font-size:12px;margin-top:2px">paperflow liest die aktuelle URL und generiert ein Provider-Template</div>
+            <button class="btn btn-green btn-sm" style="margin-top:8px" onclick="captureRecorder()" id="btn-capture">📸 Aktuelle Seite aufnehmen</button>
+            <div id="capture-result" style="display:none;margin-top:12px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                <span style="font-weight:600;font-size:13px">Generiertes Template</span>
+                <span id="capture-domain" class="badge badge-blue"></span>
+                <div class="spacer"></div>
+                <button class="btn btn-ghost btn-sm" onclick="copyTemplate()">📋 Kopieren</button>
+                <button class="btn btn-primary btn-sm" onclick="saveTemplate()">💾 Als Provider speichern</button>
+              </div>
+              <textarea id="template-editor" class="code-editor" spellcheck="false"></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div class="card-title">Provider manuell hochladen</div>
         <div class="upload-zone" id="upload-zone">
           <input type="file" id="provider-file" accept=".py">
           <div class="icon">📁</div>
@@ -295,6 +360,18 @@ class MeinproviderProvider(BaseProvider):
     <button class="btn btn-primary" style="width:100%" onclick="resetAndRelogin()">🔄 Neu einloggen</button>
     <button class="btn" style="width:100%;margin-top:8px" onclick="dismissLoginModal()">Später</button>
   </div>
+</div>
+
+<!-- Browser Modal (noVNC iframe) -->
+<div id="browser-modal">
+  <div class="browser-modal-bar">
+    <span style="font-size:18px">🌐</span>
+    <div class="title" id="browser-modal-title">Browser</div>
+    <span class="hint" id="browser-modal-hint">Logge dich ein – Session bleibt gespeichert</span>
+    <div class="spacer"></div>
+    <button class="btn btn-ghost btn-sm" onclick="closeBrowser()" style="margin-left:8px">✕ Schließen</button>
+  </div>
+  <iframe id="browser-frame" allow="fullscreen" title="Browser Desktop"></iframe>
 </div>
 
 <!-- OTP Modal -->
@@ -461,8 +538,9 @@ async function loadProviders() {
       <div class="provider-settings-panel" id="psettings-${p.name}" style="display:none">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--border)">Einstellungen – ${p.name}</div>
         <div id="psettings-fields-${p.name}"><div style="color:var(--muted);font-size:13px">Lade…</div></div>
-        <div style="margin-top:4px;display:flex;gap:10px">
+        <div style="margin-top:4px;display:flex;gap:10px;align-items:center">
           <button class="btn btn-primary btn-sm" onclick="saveProviderSettings('${p.name}')">💾 Speichern</button>
+          <button class="btn btn-ghost btn-sm" onclick="openBrowser('${p.name}')" title="Browser öffnen und einloggen">🌐 Browser öffnen</button>
         </div>
       </div>
     </div>`).join("");
@@ -757,11 +835,126 @@ setInterval(async () => {
   } catch(_) {}
 }, 2000);
 
+// ── Browser Modal ──────────────────────────────────────────────
+let _browserModal = null;
+
+async function openBrowser(context) {
+  const modal = document.getElementById("browser-modal");
+  const frame = document.getElementById("browser-frame");
+  const title = document.getElementById("browser-modal-title");
+  const hint = document.getElementById("browser-modal-hint");
+
+  // Titel je nach Kontext
+  if (context === "recorder") {
+    title.textContent = "Browser – Neuen Provider aufnehmen";
+    hint.textContent = "Navigiere zur Provider-Website, logge dich ein, dann \"Seite aufnehmen\" klicken";
+  } else {
+    title.textContent = `Browser – ${context} Login`;
+    hint.textContent = "Logge dich ein – die Session bleibt für den nächsten Scan gespeichert";
+  }
+
+  // noVNC URL: selber Host, Port 6080
+  const noVncUrl = `http://${window.location.hostname}:6080/vnc.html?autoconnect=1&resize=scale`;
+  frame.src = noVncUrl;
+  modal.classList.add("open");
+  _browserModal = context;
+}
+
+function closeBrowser() {
+  const modal = document.getElementById("browser-modal");
+  const frame = document.getElementById("browser-frame");
+  modal.classList.remove("open");
+  frame.src = "about:blank";
+  _browserModal = null;
+}
+
+// Schließen mit Escape
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && _browserModal) closeBrowser();
+});
+
+// ── Recorder ───────────────────────────────────────────────────
+async function checkBrowserStatus() {
+  const badge = document.getElementById("browser-status-badge");
+  if (!badge) return;
+  try {
+    const { available, reason } = await api("GET", "/api/browser/status");
+    if (available) {
+      badge.className = "badge badge-green";
+      badge.textContent = "✓ Browser bereit";
+    } else {
+      badge.className = "badge badge-red";
+      badge.textContent = "Browser nicht verbunden";
+      badge.title = reason || "";
+    }
+  } catch {
+    badge.className = "badge badge-yellow";
+    badge.textContent = "Prüfe…";
+  }
+}
+
+async function captureRecorder() {
+  const btn = document.getElementById("btn-capture");
+  const result = document.getElementById("capture-result");
+  btn.disabled = true;
+  btn.textContent = "⏳ Aufnehmen…";
+  try {
+    const data = await api("GET", "/api/recorder/capture");
+    document.getElementById("template-editor").value = data.template;
+    document.getElementById("capture-domain").textContent = data.domain;
+    result.style.display = "block";
+    toast(`✓ Seite aufgenommen: ${data.title || data.url}`, "ok");
+  } catch(e) {
+    toast(`Fehler: ${e.message}`, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "📸 Aktuelle Seite aufnehmen";
+  }
+}
+
+function copyTemplate() {
+  const text = document.getElementById("template-editor").value;
+  navigator.clipboard.writeText(text).then(() => toast("✓ Kopiert", "ok")).catch(() => toast("Kopieren fehlgeschlagen", "err"));
+}
+
+async function saveTemplate() {
+  const code = document.getElementById("template-editor").value;
+  if (!code.trim()) { toast("Kein Template vorhanden", "err"); return; }
+
+  // Provider-Name aus dem Code extrahieren
+  const m = code.match(/provider_name\s*=\s*["']([^"']+)["']/);
+  const name = m ? m[1] : "custom_provider";
+  const filename = `${name}.py`;
+
+  const blob = new Blob([code], { type: "text/plain" });
+  const file = new File([blob], filename, { type: "text/plain" });
+  const form = new FormData();
+  form.append("file", file);
+
+  try {
+    const r = await fetch("/api/providers/upload", { method: "POST", body: form });
+    if (!r.ok) { const e = await r.json(); throw new Error(e.detail); }
+    const data = await r.json();
+    toast(`✓ Provider "${data.name}" gespeichert – in der Liste aktivieren`, "ok");
+    document.getElementById("capture-result").style.display = "none";
+    loadProviders();
+  } catch(e) { toast(e.message, "err"); }
+}
+
 // ── Init ───────────────────────────────────────────────────────
 loadStats().then(data => {
   if (data && data.version) document.getElementById("ver").textContent = "v" + data.version;
 });
 setInterval(loadStats, 5000);
+
+// Browser-Status beim Laden der Provider-Seite prüfen
+document.querySelectorAll("nav a").forEach(a => {
+  if (a.dataset.page === "providers") {
+    const orig = a.onclick;
+    a.addEventListener("click", () => { setTimeout(checkBrowserStatus, 300); });
+  }
+});
+checkBrowserStatus();
 </script>
 </body>
 </html>

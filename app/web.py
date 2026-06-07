@@ -538,3 +538,161 @@ async def get_logs(lines: int = 200):
         return {"lines": []}
     all_lines = LOG_PATH.read_text(errors="replace").splitlines()
     return {"lines": all_lines[-lines:]}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  API – Browser (chrome-desktop CDP)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/browser/status")
+async def browser_status():
+    """Prüft ob der chrome-desktop Container erreichbar ist."""
+    import urllib.request as _urllib
+
+    cdp_url = os.environ.get("CHROME_CDP_URL", "").strip()
+    if not cdp_url:
+        return {"available": False, "reason": "CHROME_CDP_URL nicht gesetzt"}
+    try:
+        _urllib.urlopen(f"{cdp_url}/json/version", timeout=2)
+        return {"available": True, "cdp_url": cdp_url}
+    except Exception as e:
+        return {"available": False, "reason": str(e)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  API – Recorder (Provider-Template aus laufender Browser-Session)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _make_provider_template(domain: str, url: str) -> str:
+    """Generiert ein Python-Provider-Template basierend auf der aufgenommenen URL."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    raw_name = parsed.netloc.replace("www.", "").split(".")[0]
+    # Nur erlaubte Zeichen
+    name = re.sub(r"[^a-z0-9_]", "_", raw_name.lower())
+    class_name = name.capitalize()
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+    return f'''"""
+{class_name} Provider – lädt Rechnungen von {base_url} herunter.
+Generiert von paperflow Recorder.
+
+Anleitung:
+  1. Öffne den Browser-Desktop (http://<server>:6080/vnc.html)
+  2. Logge dich bei {base_url} ein
+  3. Passe fetch_invoices() an – finde und lade alle Rechnungs-PDFs herunter
+  4. Aktiviere den Provider im Web-UI unter "Provider"
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from playwright.sync_api import sync_playwright
+
+from app.providers import BaseProvider, Invoice
+
+# Startseite aufgenommen von Recorder: {url}
+_RECORDED_URL = "{url}"
+
+
+class {class_name}Provider(BaseProvider):
+    provider_name = "{name}"
+
+    BASE_URL = "{base_url}"
+
+    def fetch_invoices(self) -> list[Invoice]:
+        invoices: list[Invoice] = []
+        cdp_url = os.environ.get("CHROME_CDP_URL", "").strip()
+
+        with sync_playwright() as p:
+            if cdp_url:
+                # Echten Browser via CDP nutzen – Login bleibt erhalten
+                browser = p.chromium.connect_over_cdp(cdp_url)
+                context = browser.contexts[0] if browser.contexts else browser.new_context()
+            else:
+                browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+                context = browser.new_context()
+
+            page = context.new_page()
+
+            # TODO: Zur Rechnungsseite navigieren
+            page.goto(_RECORDED_URL)
+
+            # TODO: Login prüfen und PDFs finden
+            # Beispiel: alle PDF-Links auf der Seite sammeln
+            # pdf_links = page.locator("a[href*='.pdf']").all()
+            # for link in pdf_links:
+            #     pdf_url = link.get_attribute("href")
+            #     order_id = "..."  # eindeutige ID ableiten
+            #     output = self.download_dir / f"{self.provider_name}_{order_id}.pdf"
+            #     response = page.goto(pdf_url, wait_until="load", timeout=30000)
+            #     if response and response.ok:
+            #         output.write_bytes(response.body())
+            #         invoices.append(Invoice(
+            #             invoice_id=order_id,
+            #             file_path=output,
+            #             title=f"{class_name} Rechnung {{order_id}}",
+            #         ))
+
+            page.close()
+            if cdp_url:
+                pass  # Browser offen lassen (gehört chrome-desktop)
+            else:
+                browser.close()
+
+        return invoices
+'''
+
+
+@app.get("/api/recorder/capture")
+async def recorder_capture():
+    """
+    Verbindet sich via CDP mit dem chrome-desktop Browser,
+    liest die aktuell geöffnete URL und generiert ein Provider-Template.
+    """
+    import concurrent.futures
+
+    cdp_url = os.environ.get("CHROME_CDP_URL", "").strip()
+    if not cdp_url:
+        raise HTTPException(400, "Kein Browser verbunden – CHROME_CDP_URL nicht gesetzt")
+
+    def _do_capture():
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(cdp_url)
+            if not browser.contexts:
+                raise ValueError("Keine Browser-Contexts gefunden")
+            ctx = browser.contexts[0]
+            pages = ctx.pages
+            if not pages:
+                raise ValueError("Keine offene Seite gefunden")
+            page = pages[-1]  # letzte aktive Seite
+            current_url = page.url
+            title = page.title()
+            return current_url, title
+
+    loop = __import__("asyncio").get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        try:
+            current_url, title = await loop.run_in_executor(pool, _do_capture)
+        except Exception as e:
+            raise HTTPException(500, f"Capture fehlgeschlagen: {e}")
+
+    from urllib.parse import urlparse
+
+    parsed = urlparse(current_url)
+    domain = parsed.netloc
+    template = _make_provider_template(domain, current_url)
+
+    return {
+        "url": current_url,
+        "title": title,
+        "domain": domain,
+        "template": template,
+    }
