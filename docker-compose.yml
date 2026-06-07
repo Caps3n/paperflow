@@ -1,20 +1,45 @@
 version: "3.8"
 
 services:
+
+  # ─────────────────────────────────────────────────────────────────
+  # Chrome Desktop – echter Browser mit noVNC Web-UI
+  #   Web-Zugang:  http://<server>:6080/vnc.html
+  #   Einmalig:    Amazon.de öffnen → einloggen → Session bleibt erhalten
+  # ─────────────────────────────────────────────────────────────────
+  chrome-desktop:
+    build: ./chrome-desktop
+    container_name: chrome-desktop
+    restart: unless-stopped
+    ports:
+      - "6080:6080"   # noVNC Web-UI (Browser-Zugang zum Desktop)
+      - "9222:9222"   # Chrome Remote-Debugging (CDP) – intern für invoice-fetcher
+    volumes:
+      - chrome-data:/chrome-data   # Chrome-Profil + Cookies persistent
+    shm_size: "1gb"
+
+  # ─────────────────────────────────────────────────────────────────
+  # Invoice Fetcher – verbindet sich via CDP mit chrome-desktop
+  # ─────────────────────────────────────────────────────────────────
   invoice-fetcher:
     build: .
     container_name: invoice-fetcher
     restart: unless-stopped
+    depends_on:
+      - chrome-desktop
     env_file:
       - .env
     ports:
-      - "8080:8080"               # Web-Interface → http://localhost:8080
+      - "8080:8080"   # Web-Interface → http://localhost:8080
     volumes:
-      - ./data:/app/data                      # SQLite Datenbank (persistent)
-      - ./downloads:/app/downloads            # Temporäre Downloads
-      - ./config:/app/config                  # Provider-Konfiguration + .env
-      - ./providers_custom:/app/providers_custom  # Eigene Provider
-    # Für Playwright im Docker (kein Display nötig - headless)
+      - ./data:/app/data
+      - ./downloads:/app/downloads
+      - ./config:/app/config
+      - ./providers_custom:/app/providers_custom
     shm_size: "2gb"
     environment:
-      - DISPLAY=:99
+      # CDP-URL zum chrome-desktop Container (internes Docker-Netzwerk)
+      - CHROME_CDP_URL=http://chrome-desktop:9222
+
+volumes:
+  chrome-data:   # Chrome-Profil: Cookies + Login-Session bleiben erhalten

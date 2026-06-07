@@ -1,13 +1,16 @@
 """
 Amazon Provider – lädt Rechnungen von Amazon.de / Amazon.com herunter.
 
-Nutzt Playwright (headless Chromium) + playwright-stealth für Browser-Automation.
-playwright-stealth patcht alle bekannten Bot-Erkennungs-Vektoren (navigator.webdriver,
-plugins, WebGL, canvas, etc.) damit Amazon eine echte Browser-Session vergibt.
+Zwei Modi:
+  CDP-Modus (bevorzugt):
+    Verbindet sich mit einem echten Chrome-Browser via Remote-Debugging (CDP).
+    Der Browser läuft im chrome-desktop Container und ist über noVNC zugänglich.
+    Der Nutzer loggt sich einmalig manuell ein → Session bleibt dauerhaft erhalten.
+    Setzt CHROME_CDP_URL=http://chrome-desktop:9222 in der Umgebung voraus.
 
-Virtual Authenticator (CDP) verhindert Passkey/FIDO-Dialoge beim Login.
-Jahresfilter wird per Dropdown-Select gesetzt (nicht per URL-Parameter) –
-genau wie ein echter Nutzer es tun würde.
+  Fallback-Modus:
+    Startet einen eigenen Chromium-Browser (headless oder mit Xvfb).
+    Nutzt playwright-stealth und Virtual Authenticator.
 """
 
 from __future__ import annotations
@@ -30,10 +33,13 @@ logger = logging.getLogger("provider.amazon")
 
 COOKIES_FILE = Path("/app/data/amazon_cookies.json")
 
-# Xvfb (pyvirtualdisplay) – falls im Container verfügbar → headless=False
+# CDP-Modus: Verbindung zu externem Chrome (chrome-desktop Container)
+# Gesetzt via CHROME_CDP_URL=http://chrome-desktop:9222
+_CDP_URL = os.environ.get("CHROME_CDP_URL", "").strip()
+
+# Xvfb (pyvirtualdisplay) – Fallback falls kein CDP verfügbar
 try:
     from pyvirtualdisplay import Display as _XvfbDisplay
-
     _HAS_XVFB = True
 except ImportError:
     _HAS_XVFB = False
@@ -78,7 +84,95 @@ class AmazonProvider(BaseProvider):
     def fetch_invoices(self) -> list[Invoice]:
         invoices: list[Invoice] = []
 
-        # Xvfb starten falls verfügbar → headless=False für echte Browser-Fingerprints
+        if _CDP_URL:
+            invoices = self._fetch_via_cdp()
+        else:
+            invoices = self._fetch_local()
+
+        return invoices
+
+    def _fetch_via_cdp(self) -> list[Invoice]:
+        """
+        CDP-Modus: Verbindet sich mit dem chrome-desktop Container.
+        Der Nutzer hat sich dort einmalig manuell bei Amazon eingeloggt.
+        Diese Session wird direkt weiterverwendet – kein automatischer Login nötig.
+        """
+        invoices: list[Invoice] = []
+        logger.info("CDP-Modus: Verbinde mit Chrome auf %s", _CDP_URL)
+
+        # Warten bis Chrome bereit ist (Container-Start kann etwas dauern)
+        import urllib.request
+        for attempt in range(30):
+            try:
+                urllib.request.urlopen(f"{_CDP_URL}/json/version", timeout=2)
+                break
+            except Exception:
+                if attempt == 0:
+                    logger.info("Warte auf Chrome CDP (%s)...", _CDP_URL)
+                time.sleep(2)
+        else:
+            logger.error("Chrome CDP nicht erreichbar nach 60s: %s", _CDP_URL)
+            return []
+
+        with sync_playwright() as p:
+            try:
+                browser = p.chromium.connect_over_cdp(_CDP_URL)
+                logger.info("Chrome CDP verbunden: %d Context(s) vorhanden", len(browser.contexts))
+            except Exception as e:
+                logger.error("CDP-Verbindung fehlgeschlagen: %s", e)
+                return []
+
+            # Bestehenden Context verwenden (hat Amazon-Session) oder neuen erstellen
+            if browser.contexts:
+                context = browser.contexts[0]
+                logger.info("Bestehende Browser-Session übernommen")
+            else:
+                context = browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/124.0.0.0 Safari/537.36"
+                    ),
+                    locale="de-DE",
+                    viewport={"width": 1280, "height": 900},
+                )
+                logger.info("Neuer Browser-Context erstellt")
+
+            page = context.new_page()
+
+            try:
+                if not self._ensure_logged_in(page):
+                    logger.error(
+                        "Amazon Login fehlgeschlagen.\n"
+                        "→ Öffne http://<server>:6080/vnc.html und logge dich manuell ein."
+                    )
+                    return []
+
+                self._save_cookies(context)
+
+                invoice_map = self._get_invoice_map(page)
+                logger.info("Rechnungen gefunden: %d", len(invoice_map))
+
+                for order_id, pdf_url in invoice_map.items():
+                    invoice = self._download_pdf(page, order_id, pdf_url)
+                    if invoice:
+                        invoices.append(invoice)
+
+            except Exception as e:
+                logger.exception("Fehler im CDP-Modus: %s", e)
+            finally:
+                page.close()
+                # Browser NICHT schließen – bleibt für den Nutzer sichtbar
+
+        return invoices
+
+    def _fetch_local(self) -> list[Invoice]:
+        """
+        Fallback-Modus: Startet einen eigenen Chromium-Browser.
+        Wird verwendet wenn CHROME_CDP_URL nicht gesetzt ist.
+        """
+        invoices: list[Invoice] = []
+
         display = None
         use_headless = True
         if _HAS_XVFB:
@@ -89,8 +183,7 @@ class AmazonProvider(BaseProvider):
                 logger.info("Xvfb gestartet – Browser läuft als headless=False")
             except Exception as e:
                 logger.warning(
-                    "Xvfb konnte nicht gestartet werden: %s – fallback auf headless=True",
-                    e,
+                    "Xvfb konnte nicht gestartet werden: %s – fallback auf headless=True", e
                 )
 
         try:
@@ -105,23 +198,16 @@ class AmazonProvider(BaseProvider):
                 )
                 context = self._create_context(browser)
                 page = context.new_page()
-
-                # Stealth auf die Page anwenden – patcht alle Bot-Erkennungs-Vektoren
                 stealth_sync(page)
-
-                # Virtual Authenticator via CDP – verhindert Passkey/FIDO-Dialoge
                 self._setup_virtual_authenticator(page)
 
                 try:
                     if not self._ensure_logged_in(page):
-                        logger.error(
-                            "Amazon Login fehlgeschlagen – überspringe Provider"
-                        )
+                        logger.error("Amazon Login fehlgeschlagen – überspringe Provider")
                         return []
 
                     self._save_cookies(context)
 
-                    # Bestellungen + direkte PDF-URLs aus dem "Rechnung ▼" Dropdown holen
                     invoice_map = self._get_invoice_map(page)
                     logger.info("Rechnungen gefunden: %d", len(invoice_map))
 
