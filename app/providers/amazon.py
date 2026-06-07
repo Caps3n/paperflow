@@ -37,9 +37,18 @@ COOKIES_FILE = Path("/app/data/amazon_cookies.json")
 
 # Deutsche Monatsnamen → Monatsnummer
 _GERMAN_MONTHS = {
-    "januar": 1, "februar": 2, "märz": 3, "april": 4,
-    "mai": 5, "juni": 6, "juli": 7, "august": 8,
-    "september": 9, "oktober": 10, "november": 11, "dezember": 12,
+    "januar": 1,
+    "februar": 2,
+    "märz": 3,
+    "april": 4,
+    "mai": 5,
+    "juni": 6,
+    "juli": 7,
+    "august": 8,
+    "september": 9,
+    "oktober": 10,
+    "november": 11,
+    "dezember": 12,
 }
 
 # CDP-Modus: Verbindung zu externem Chrome (chrome-desktop Container)
@@ -87,7 +96,11 @@ class AmazonProvider(BaseProvider):
         self.start_year = int(os.environ.get("AMAZON_START_YEAR", "2009"))
         self.urls = self.DOMAINS.get(self.domain, self.DOMAINS["amazon.de"])
         # Incremental-Modus: nur letzte 30 Tage scannen (für tägliche Läufe)
-        self.incremental = os.environ.get("AMAZON_INCREMENTAL", "").lower() in ("1", "true", "yes")
+        self.incremental = os.environ.get("AMAZON_INCREMENTAL", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
     # ──────────────────────────────────────────────────────────────
     # Öffentliche Hauptmethode
@@ -171,8 +184,12 @@ class AmazonProvider(BaseProvider):
 
                 for order_id, info in invoice_map.items():
                     invoice = self._download_pdf(
-                        page, order_id, info["pdf_url"],
-                        info.get("date"), info.get("year"), info.get("title"),
+                        page,
+                        order_id,
+                        info["pdf_url"],
+                        info.get("date"),
+                        info.get("year"),
+                        info.get("title"),
                     )
                     if invoice:
                         invoices.append(invoice)
@@ -235,8 +252,12 @@ class AmazonProvider(BaseProvider):
 
                     for order_id, info in invoice_map.items():
                         invoice = self._download_pdf(
-                            page, order_id, info["pdf_url"],
-                            info.get("date"), info.get("year"), info.get("title"),
+                            page,
+                            order_id,
+                            info["pdf_url"],
+                            info.get("date"),
+                            info.get("year"),
+                            info.get("title"),
                         )
                         if invoice:
                             invoices.append(invoice)
@@ -620,19 +641,25 @@ class AmazonProvider(BaseProvider):
         # ── Vollständiger Scan: alle Jahre seit start_year ──────────────────────
         years = list(range(current_year, self.start_year - 1, -1))
         skipped = sum(
-            1 for y in years
+            1
+            for y in years
             if y < current_year and database.is_year_complete(self.provider_name, y)
         )
         logger.info(
             "Scanne %d Jahre (%d–%d), %d bereits abgeschlossen → überspringe",
-            len(years), self.start_year, current_year, skipped,
+            len(years),
+            self.start_year,
+            current_year,
+            skipped,
         )
 
         for year in years:
             time_filter = f"year-{year}"
 
             # Vergangene Jahre überspringen die bereits vollständig gescannt wurden
-            if year < current_year and database.is_year_complete(self.provider_name, year):
+            if year < current_year and database.is_year_complete(
+                self.provider_name, year
+            ):
                 logger.info("Jahr %d: bereits gescannt – überspringe", year)
                 continue
 
@@ -704,7 +731,11 @@ class AmazonProvider(BaseProvider):
         return not self._is_login_page(page)
 
     def _scan_order_filter(
-        self, page: Page, time_filter: str, result: dict[str, dict], year: int | None = None
+        self,
+        page: Page,
+        time_filter: str,
+        result: dict[str, dict],
+        year: int | None = None,
     ) -> int:
         """
         Lädt eine gefilterte Bestellliste, liest alle Popover-URLs aus dem DOM
@@ -841,9 +872,16 @@ class AmazonProvider(BaseProvider):
                         pdf_url = f"{self.urls['base']}{pdf_url}"
                     date_iso = self._parse_amazon_date(item.get("dateText"))
                     title = item.get("titleText") or None
-                    result[order_id] = {"pdf_url": pdf_url, "date": date_iso, "year": year, "title": title}
+                    result[order_id] = {
+                        "pdf_url": pdf_url,
+                        "date": date_iso,
+                        "year": year,
+                        "title": title,
+                    }
                     found_new += 1
-                    logger.debug("PDF: %s → %s | Datum: %s", order_id, pdf_url[:60], date_iso)
+                    logger.debug(
+                        "PDF: %s → %s | Datum: %s", order_id, pdf_url[:60], date_iso
+                    )
                 else:
                     logger.debug(
                         "Kein PDF für %s (kein Rechnungs-Link im Popover)", order_id
@@ -882,7 +920,11 @@ class AmazonProvider(BaseProvider):
         """
         output_path = self.download_dir / f"amazon_{order_id}.pdf"
         extra_tags = [str(year)] if year else []
-        title = f"Amazon – {product_title}" if product_title else f"Amazon Rechnung {order_id}"
+        title = (
+            f"Amazon – {product_title}"
+            if product_title
+            else f"Amazon Rechnung {order_id}"
+        )
 
         # Cache prüfen: existierende Datei muss echtes PDF sein
         if output_path.exists() and output_path.stat().st_size > 1000:
@@ -946,7 +988,9 @@ class AmazonProvider(BaseProvider):
             output_path.write_bytes(pdf_bytes)
             logger.info(
                 "✓ PDF heruntergeladen: %s (%d KB) | Datum: %s",
-                order_id, len(pdf_bytes) // 1024, invoice_date or "unbekannt",
+                order_id,
+                len(pdf_bytes) // 1024,
+                invoice_date or "unbekannt",
             )
             return Invoice(
                 invoice_id=order_id,

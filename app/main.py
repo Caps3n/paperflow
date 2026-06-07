@@ -178,11 +178,15 @@ def run_once() -> None:
 
         # ── Phase 3: Parallel-Upload ───────────────────────────────────────────
         state.set_phase("upload", pname, total=len(to_upload))
-        logger.info("Uploade %d Rechnungen (max. %d parallel)…", len(to_upload), UPLOAD_WORKERS)
+        logger.info(
+            "Uploade %d Rechnungen (max. %d parallel)…", len(to_upload), UPLOAD_WORKERS
+        )
 
         with ThreadPoolExecutor(max_workers=UPLOAD_WORKERS) as executor:
             future_map = {
-                executor.submit(_upload_worker, pname, inv, provider.tags, provider.correspondent): inv
+                executor.submit(
+                    _upload_worker, pname, inv, provider.tags, provider.correspondent
+                ): inv
                 for inv in to_upload
             }
             for future in as_completed(future_map):
@@ -196,7 +200,8 @@ def run_once() -> None:
                         logger.info("✓ %s (Task: %s)", inv.title[:60], task_id)
                     else:
                         database.mark_failed(
-                            pname, inv_id,
+                            pname,
+                            inv_id,
                             error or "Upload fehlgeschlagen",
                             error_type="upload_failed",
                         )

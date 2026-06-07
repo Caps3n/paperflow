@@ -174,7 +174,12 @@ def mark_year_complete(provider: str, year: int, invoice_count: int = 0) -> None
             (provider, year, invoice_count, now),
         )
         conn.commit()
-    logger.debug("Jahr %d (%s) als gescannt markiert (%d Rechnungen)", year, provider, invoice_count)
+    logger.debug(
+        "Jahr %d (%s) als gescannt markiert (%d Rechnungen)",
+        year,
+        provider,
+        invoice_count,
+    )
 
 
 def is_year_complete(provider: str, year: int) -> bool:

@@ -563,6 +563,7 @@ async def get_paperless_correspondents():
     """Lädt alle Korrespondenten aus Paperless-NGX für das Dropdown."""
     try:
         from app.paperless_client import PaperlessClient
+
         client = PaperlessClient()
         return {"correspondents": client.list_correspondents()}
     except Exception as e:
@@ -574,6 +575,7 @@ async def get_paperless_tags():
     """Lädt alle Tags aus Paperless-NGX für das Dropdown."""
     try:
         from app.paperless_client import PaperlessClient
+
         client = PaperlessClient()
         return {"tags": client.list_tags()}
     except Exception as e:

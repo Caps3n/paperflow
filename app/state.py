@@ -7,11 +7,11 @@ from __future__ import annotations
 
 # Fortschritt des aktuellen Scan-Laufs
 scan_progress: dict = {
-    "phase": "",       # "discover" | "download" | "upload" | ""
-    "provider": "",    # aktueller Provider
-    "total": 0,        # Gesamtzahl Rechnungen in dieser Phase
-    "done": 0,         # Bereits verarbeitete
-    "current": "",     # Aktuelle Rechnung (z.B. order_id)
+    "phase": "",  # "discover" | "download" | "upload" | ""
+    "provider": "",  # aktueller Provider
+    "total": 0,  # Gesamtzahl Rechnungen in dieser Phase
+    "done": 0,  # Bereits verarbeitete
+    "current": "",  # Aktuelle Rechnung (z.B. order_id)
 }
 
 
@@ -20,7 +20,9 @@ def reset_progress() -> None:
 
 
 def set_phase(phase: str, provider: str = "", total: int = 0) -> None:
-    scan_progress.update(phase=phase, provider=provider, total=total, done=0, current="")
+    scan_progress.update(
+        phase=phase, provider=provider, total=total, done=0, current=""
+    )
 
 
 def tick(current: str = "") -> None:
