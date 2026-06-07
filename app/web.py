@@ -367,6 +367,23 @@ async def get_history(status: str | None = None, provider: str | None = None):
     return {"invoices": rows}
 
 
+class BulkIds(BaseModel):
+    ids: list[int]
+
+
+# Bulk-Endpunkte VOR /{db_id} definieren – sonst matcht FastAPI "bulk" als int-Parameter
+@app.delete("/api/history/bulk")
+async def bulk_delete(body: BulkIds):
+    deleted = sum(1 for i in body.ids if database.delete_invoice(i))
+    return {"deleted": deleted}
+
+
+@app.post("/api/history/bulk/retry")
+async def bulk_retry(body: BulkIds):
+    retried = sum(1 for i in body.ids if database.reset_invoice(i))
+    return {"retried": retried}
+
+
 @app.delete("/api/history/{db_id}")
 async def delete_history_entry(db_id: int):
     if not database.delete_invoice(db_id):
@@ -379,22 +396,6 @@ async def retry_history_entry(db_id: int):
     if not database.reset_invoice(db_id):
         raise HTTPException(404, "Eintrag nicht gefunden")
     return {"ok": True}
-
-
-class BulkIds(BaseModel):
-    ids: list[int]
-
-
-@app.delete("/api/history/bulk")
-async def bulk_delete(body: BulkIds):
-    deleted = sum(1 for i in body.ids if database.delete_invoice(i))
-    return {"deleted": deleted}
-
-
-@app.post("/api/history/bulk/retry")
-async def bulk_retry(body: BulkIds):
-    retried = sum(1 for i in body.ids if database.reset_invoice(i))
-    return {"retried": retried}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
