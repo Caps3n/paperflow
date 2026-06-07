@@ -629,7 +629,7 @@ class {class_name}Provider(BaseProvider):
             # for link in pdf_links:
             #     pdf_url = link.get_attribute("href")
             #     order_id = "..."  # eindeutige ID ableiten
-            #     output = self.download_dir / f"{self.provider_name}_{order_id}.pdf"
+            #     output = self.download_dir / f"{{self.provider_name}}_{{order_id}}.pdf"
             #     response = page.goto(pdf_url, wait_until="load", timeout=30000)
             #     if response and response.ok:
             #         output.write_bytes(response.body())
