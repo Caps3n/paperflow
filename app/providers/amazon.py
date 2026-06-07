@@ -790,37 +790,50 @@ class AmazonProvider(BaseProvider):
         output_path = self.download_dir / f"amazon_{order_id}.pdf"
 
         if output_path.exists() and output_path.stat().st_size > 1000:
-            logger.debug("Bereits vorhanden: %s", order_id)
-            return Invoice(
-                invoice_id=order_id,
-                file_path=output_path,
-                title=f"Amazon Rechnung {order_id}",
-            )
+            # Prüfe ob gecachte Datei wirklich ein PDF ist (Magic-Bytes %PDF)
+            if output_path.read_bytes()[:4] == b"%PDF":
+                logger.debug("Bereits vorhanden: %s", order_id)
+                return Invoice(
+                    invoice_id=order_id,
+                    file_path=output_path,
+                    title=f"Amazon Rechnung {order_id}",
+                )
+            else:
+                logger.info(
+                    "Gecachte Datei kein PDF – wird neu heruntergeladen: %s", order_id
+                )
+                output_path.unlink()
 
         try:
-            response = page.goto(pdf_url, wait_until="load", timeout=30000)
-            if response and response.ok:
+            # context.request.get() statt page.goto() – verwendet Session-Cookies
+            # ohne HTML-Redirect-Seiten als "PDF" zu speichern
+            response = page.context.request.get(pdf_url, timeout=30000)
+            if response.ok:
                 pdf_bytes = response.body()
-                if len(pdf_bytes) > 1000:
-                    output_path.write_bytes(pdf_bytes)
-                    logger.info(
-                        "✓ PDF heruntergeladen: %s (%d KB)",
-                        order_id,
-                        len(pdf_bytes) // 1024,
-                    )
-                    return Invoice(
-                        invoice_id=order_id,
-                        file_path=output_path,
-                        title=f"Amazon Rechnung {order_id}",
-                    )
-                else:
+
+                # Magic-Bytes prüfen: echtes PDF beginnt mit %PDF
+                if not pdf_bytes.startswith(b"%PDF"):
                     logger.warning(
-                        "PDF für %s zu klein (%d bytes)", order_id, len(pdf_bytes)
+                        "Kein PDF für %s – erhalten: %r... (%d bytes)",
+                        order_id,
+                        pdf_bytes[:40],
+                        len(pdf_bytes),
                     )
-            else:
-                logger.warning(
-                    "HTTP %s für %s", response.status if response else "?", order_id
+                    return None
+
+                output_path.write_bytes(pdf_bytes)
+                logger.info(
+                    "✓ PDF heruntergeladen: %s (%d KB)",
+                    order_id,
+                    len(pdf_bytes) // 1024,
                 )
+                return Invoice(
+                    invoice_id=order_id,
+                    file_path=output_path,
+                    title=f"Amazon Rechnung {order_id}",
+                )
+            else:
+                logger.warning("HTTP %s für %s", response.status, order_id)
         except Exception as e:
             logger.error("Download fehlgeschlagen %s: %s", order_id, e)
 
