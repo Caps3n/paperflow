@@ -15,6 +15,8 @@ Zwei Modi:
 
 from __future__ import annotations
 
+import base64
+import datetime
 import json
 import logging
 import os
@@ -26,12 +28,19 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
 from playwright_stealth import stealth_sync
 
-from app import otp_state
+from app import database, otp_state
 from app.providers import BaseProvider, Invoice
 
 logger = logging.getLogger("provider.amazon")
 
 COOKIES_FILE = Path("/app/data/amazon_cookies.json")
+
+# Deutsche Monatsnamen → Monatsnummer
+_GERMAN_MONTHS = {
+    "januar": 1, "februar": 2, "märz": 3, "april": 4,
+    "mai": 5, "juni": 6, "juli": 7, "august": 8,
+    "september": 9, "oktober": 10, "november": 11, "dezember": 12,
+}
 
 # CDP-Modus: Verbindung zu externem Chrome (chrome-desktop Container)
 # Gesetzt via CHROME_CDP_URL=http://chrome-desktop:9222
@@ -77,6 +86,8 @@ class AmazonProvider(BaseProvider):
         self.domain = os.environ.get("AMAZON_DOMAIN", "amazon.de")
         self.start_year = int(os.environ.get("AMAZON_START_YEAR", "2009"))
         self.urls = self.DOMAINS.get(self.domain, self.DOMAINS["amazon.de"])
+        # Incremental-Modus: nur letzte 30 Tage scannen (für tägliche Läufe)
+        self.incremental = os.environ.get("AMAZON_INCREMENTAL", "").lower() in ("1", "true", "yes")
 
     # ──────────────────────────────────────────────────────────────
     # Öffentliche Hauptmethode
@@ -158,8 +169,11 @@ class AmazonProvider(BaseProvider):
                 invoice_map = self._get_invoice_map(page)
                 logger.info("Rechnungen gefunden: %d", len(invoice_map))
 
-                for order_id, pdf_url in invoice_map.items():
-                    invoice = self._download_pdf(page, order_id, pdf_url)
+                for order_id, info in invoice_map.items():
+                    invoice = self._download_pdf(
+                        page, order_id, info["pdf_url"],
+                        info.get("date"), info.get("year"), info.get("title"),
+                    )
                     if invoice:
                         invoices.append(invoice)
 
@@ -219,8 +233,11 @@ class AmazonProvider(BaseProvider):
                     invoice_map = self._get_invoice_map(page)
                     logger.info("Rechnungen gefunden: %d", len(invoice_map))
 
-                    for order_id, pdf_url in invoice_map.items():
-                        invoice = self._download_pdf(page, order_id, pdf_url)
+                    for order_id, info in invoice_map.items():
+                        invoice = self._download_pdf(
+                            page, order_id, info["pdf_url"],
+                            info.get("date"), info.get("year"), info.get("title"),
+                        )
                         if invoice:
                             invoices.append(invoice)
 
@@ -433,15 +450,13 @@ class AmazonProvider(BaseProvider):
                 )
 
             # E-Mail per JS setzen (umgeht Visibility-Check)
-            import json as _json
-
             page.evaluate(
                 f"""() => {{
                     const sel = '#ap_email, input[name="email"], input[type="email"], input[type="text"]';
                     const el = document.querySelector(sel);
                     if (!el) return;
                     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                    setter.call(el, {_json.dumps(self.email)});
+                    setter.call(el, {json.dumps(self.email)});
                     el.dispatchEvent(new Event('input', {{bubbles: true}}));
                     el.dispatchEvent(new Event('change', {{bubbles: true}}));
                     el.dispatchEvent(new Event('blur', {{bubbles: true}}));
@@ -482,7 +497,7 @@ class AmazonProvider(BaseProvider):
                     el.removeAttribute('hidden');
                     el.style.cssText = '';
                     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                    setter.call(el, {_json.dumps(self.password)});
+                    setter.call(el, {json.dumps(self.password)});
                     el.dispatchEvent(new Event('input', {{bubbles: true}}));
                     el.dispatchEvent(new Event('change', {{bubbles: true}}));
                 }}"""
@@ -569,26 +584,66 @@ class AmazonProvider(BaseProvider):
     # Rechnungs-URLs aus "Rechnung ▼" Dropdown holen
     # ──────────────────────────────────────────────────────────────
 
-    def _get_invoice_map(self, page: Page) -> dict[str, str]:
+    def _parse_amazon_date(self, date_text: str | None) -> str | None:
+        """Parst deutsches Amazon-Datum wie '8. Dezember 2024' → '2024-12-08'."""
+        if not date_text:
+            return None
+        try:
+            parts = date_text.lower().replace(".", "").split()
+            if len(parts) >= 3:
+                day = int(parts[0])
+                month = _GERMAN_MONTHS.get(parts[1].strip(","))
+                year = int(parts[-1])
+                if month and 1 <= day <= 31 and 2000 <= year <= 2100:
+                    return f"{year}-{month:02d}-{day:02d}"
+        except Exception:
+            pass
+        return None
+
+    def _get_invoice_map(self, page: Page) -> dict[str, dict]:
         """
         Iteriert durch alle Jahre seit AMAZON_START_YEAR.
-        Setzt den Jahresfilter per Dropdown-Select (genau wie ein echter Nutzer).
+        Vergangene Jahre werden nach dem ersten Scan übersprungen (year-skip).
+        Im Incremental-Modus werden nur die letzten 30 Tage gescannt.
+        Gibt dict[order_id → {pdf_url, date, year}] zurück.
         """
-        import datetime
-
-        result: dict[str, str] = {}
+        result: dict[str, dict] = {}
         current_year = datetime.date.today().year
+
+        # ── Incremental-Modus: nur letzte 30 Tage ──────────────────────────────
+        if self.incremental:
+            logger.info("Incremental-Modus: Scanne nur letzte 30 Tage (last30)")
+            self._scan_order_filter(page, "last30", result, current_year)
+            logger.info("Incremental: %d Rechnungen gefunden", len(result))
+            return result
+
+        # ── Vollständiger Scan: alle Jahre seit start_year ──────────────────────
         years = list(range(current_year, self.start_year - 1, -1))
+        skipped = sum(
+            1 for y in years
+            if y < current_year and database.is_year_complete(self.provider_name, y)
+        )
         logger.info(
-            "Scanne %d Jahre (%d–%d)...", len(years), self.start_year, current_year
+            "Scanne %d Jahre (%d–%d), %d bereits abgeschlossen → überspringe",
+            len(years), self.start_year, current_year, skipped,
         )
 
         for year in years:
             time_filter = f"year-{year}"
-            found = self._scan_order_filter(page, time_filter, result)
+
+            # Vergangene Jahre überspringen die bereits vollständig gescannt wurden
+            if year < current_year and database.is_year_complete(self.provider_name, year):
+                logger.info("Jahr %d: bereits gescannt – überspringe", year)
+                continue
+
+            found = self._scan_order_filter(page, time_filter, result, year)
             logger.info(
                 "Jahr %d: %d neue Rechnungen (gesamt: %d)", year, found, len(result)
             )
+
+            # Vergangene Jahre nach erstem Scan als "abgeschlossen" markieren
+            if year < current_year:
+                database.mark_year_complete(self.provider_name, year, found)
 
         return result
 
@@ -649,7 +704,7 @@ class AmazonProvider(BaseProvider):
         return not self._is_login_page(page)
 
     def _scan_order_filter(
-        self, page: Page, time_filter: str, result: dict[str, str]
+        self, page: Page, time_filter: str, result: dict[str, dict], year: int | None = None
     ) -> int:
         """
         Lädt eine gefilterte Bestellliste, liest alle Popover-URLs aus dem DOM
@@ -700,7 +755,7 @@ class AmazonProvider(BaseProvider):
                     "Seiteninhalt (Anfang): %s", diag.get("bodySnippet", "")[:200]
                 )
 
-            # Sammle alle Popover-URLs + Bestellnummern in einem JS-Call
+            # Sammle alle Popover-URLs + Bestellnummern + Datum in einem JS-Call
             items = page.evaluate(
                 """() => {
                     const results = [];
@@ -712,9 +767,33 @@ class AmazonProvider(BaseProvider):
                         );
                         const html = card ? card.innerHTML : document.body.innerHTML;
                         const m = html.match(/\\d{3}-\\d{7}-\\d{7}/);
-                        if (m) {
-                            results.push({ orderId: m[0], popoverUrl: a.href });
+                        if (!m) continue;
+                        // Bestelldatum extrahieren
+                        let dateText = null;
+                        if (card) {
+                            const spans = card.querySelectorAll('span, div');
+                            for (const s of spans) {
+                                const t = s.innerText ? s.innerText.trim() : '';
+                                if (/^\\d+\\.\\s+\\w+\\s+\\d{4}$/.test(t)) {
+                                    dateText = t;
+                                    break;
+                                }
+                            }
                         }
+                        // Produkttitel extrahieren (erstes Produkt in der Bestellung)
+                        let titleText = null;
+                        if (card) {
+                            const titleEl = card.querySelector(
+                                '.yohtmlc-product-title, ' +
+                                '.a-fixed-left-grid-inner .a-col-right a.a-link-normal, ' +
+                                'a[class*="product-title"], ' +
+                                '.product-image+* a'
+                            );
+                            if (titleEl) {
+                                titleText = titleEl.innerText.trim().replace(/\\s+/g, ' ').substring(0, 80);
+                            }
+                        }
+                        results.push({ orderId: m[0], popoverUrl: a.href, dateText, titleText });
                     }
                     return results;
                 }"""
@@ -760,9 +839,11 @@ class AmazonProvider(BaseProvider):
                     # Relative URLs zu absoluten machen (z.B. /documents/download/...)
                     if pdf_url.startswith("/"):
                         pdf_url = f"{self.urls['base']}{pdf_url}"
-                    result[order_id] = pdf_url
+                    date_iso = self._parse_amazon_date(item.get("dateText"))
+                    title = item.get("titleText") or None
+                    result[order_id] = {"pdf_url": pdf_url, "date": date_iso, "year": year, "title": title}
                     found_new += 1
-                    logger.debug("PDF: %s → %s", order_id, pdf_url[:60])
+                    logger.debug("PDF: %s → %s | Datum: %s", order_id, pdf_url[:60], date_iso)
                 else:
                     logger.debug(
                         "Kein PDF für %s (kein Rechnungs-Link im Popover)", order_id
@@ -785,55 +866,96 @@ class AmazonProvider(BaseProvider):
     # PDF direkt herunterladen
     # ──────────────────────────────────────────────────────────────
 
-    def _download_pdf(self, page: Page, order_id: str, pdf_url: str) -> Invoice | None:
-        """Lädt das PDF direkt über die authentifizierte Session herunter."""
+    def _download_pdf(
+        self,
+        page: Page,
+        order_id: str,
+        pdf_url: str,
+        invoice_date: str | None = None,
+        year: int | None = None,
+        product_title: str | None = None,
+    ) -> Invoice | None:
+        """
+        Lädt das PDF via Browser-fetch() herunter.
+        Nutzt alle Session-Cookies und Browser-Header – zuverlässiger als
+        page.context.request.get() welches manchmal HTML-Redirects bekommt.
+        """
         output_path = self.download_dir / f"amazon_{order_id}.pdf"
+        extra_tags = [str(year)] if year else []
+        title = f"Amazon – {product_title}" if product_title else f"Amazon Rechnung {order_id}"
 
+        # Cache prüfen: existierende Datei muss echtes PDF sein
         if output_path.exists() and output_path.stat().st_size > 1000:
-            # Prüfe ob gecachte Datei wirklich ein PDF ist (Magic-Bytes %PDF)
             if output_path.read_bytes()[:4] == b"%PDF":
                 logger.debug("Bereits vorhanden: %s", order_id)
                 return Invoice(
                     invoice_id=order_id,
                     file_path=output_path,
-                    title=f"Amazon Rechnung {order_id}",
+                    title=title,
+                    date=invoice_date,
+                    extra_tags=extra_tags,
                 )
             else:
-                logger.info(
-                    "Gecachte Datei kein PDF – wird neu heruntergeladen: %s", order_id
-                )
+                logger.info("Gecachte HTML-Datei gelöscht, lade neu: %s", order_id)
                 output_path.unlink()
 
         try:
-            # context.request.get() statt page.goto() – verwendet Session-Cookies
-            # ohne HTML-Redirect-Seiten als "PDF" zu speichern
-            response = page.context.request.get(pdf_url, timeout=30000)
-            if response.ok:
-                pdf_bytes = response.body()
+            # JS-fetch im Browser-Kontext: nutzt ALLE Session-Cookies + Browser-Header
+            # Gibt PDF-Bytes als Base64-String zurück
+            result = page.evaluate(
+                """async (url) => {
+                    try {
+                        const resp = await fetch(url, {
+                            credentials: 'include',
+                            headers: { 'Accept': 'application/pdf,application/octet-stream,*/*' }
+                        });
+                        if (!resp.ok) return { ok: false, status: resp.status };
+                        const buf = await resp.arrayBuffer();
+                        const bytes = new Uint8Array(buf);
+                        // Magic-Bytes prüfen
+                        const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+                        if (magic !== '%PDF') return { ok: true, status: resp.status, magic: magic };
+                        // Base64 in Chunks (verhindert Stack-Overflow bei großen PDFs)
+                        let binary = '';
+                        for (let i = 0; i < bytes.length; i += 8192) {
+                            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+                        }
+                        return { ok: true, status: resp.status, data: btoa(binary) };
+                    } catch(e) {
+                        return { ok: false, status: 0, error: String(e) };
+                    }
+                }""",
+                pdf_url,
+            )
 
-                # Magic-Bytes prüfen: echtes PDF beginnt mit %PDF
-                if not pdf_bytes.startswith(b"%PDF"):
-                    logger.warning(
-                        "Kein PDF für %s – erhalten: %r... (%d bytes)",
-                        order_id,
-                        pdf_bytes[:40],
-                        len(pdf_bytes),
-                    )
-                    return None
+            if not result or not result.get("ok"):
+                status = result.get("status", "?") if result else "?"
+                err = result.get("error", "")
+                logger.warning(
+                    "HTTP %s für %s%s", status, order_id, f" – {err}" if err else ""
+                )
+                return None
 
-                output_path.write_bytes(pdf_bytes)
-                logger.info(
-                    "✓ PDF heruntergeladen: %s (%d KB)",
-                    order_id,
-                    len(pdf_bytes) // 1024,
-                )
-                return Invoice(
-                    invoice_id=order_id,
-                    file_path=output_path,
-                    title=f"Amazon Rechnung {order_id}",
-                )
-            else:
-                logger.warning("HTTP %s für %s", response.status, order_id)
+            b64_data = result.get("data")
+            if not b64_data:
+                magic = result.get("magic", "?")
+                logger.warning("Kein PDF für %s – Magic-Bytes: %r", order_id, magic)
+                return None
+
+            pdf_bytes = base64.b64decode(b64_data)
+            output_path.write_bytes(pdf_bytes)
+            logger.info(
+                "✓ PDF heruntergeladen: %s (%d KB) | Datum: %s",
+                order_id, len(pdf_bytes) // 1024, invoice_date or "unbekannt",
+            )
+            return Invoice(
+                invoice_id=order_id,
+                file_path=output_path,
+                title=title,
+                date=invoice_date,
+                extra_tags=extra_tags,
+            )
+
         except Exception as e:
             logger.error("Download fehlgeschlagen %s: %s", order_id, e)
 

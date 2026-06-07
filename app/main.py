@@ -15,6 +15,7 @@ import os
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import schedule
@@ -22,10 +23,13 @@ import uvicorn
 import yaml
 from dotenv import load_dotenv
 
-from app import database
+from app import database, state
 from app.paperless_client import PaperlessClient
 from app.providers import BaseProvider, Invoice
 from app.version import __version__
+
+# Anzahl paralleler Upload-Threads (Standard: 3)
+UPLOAD_WORKERS = int(os.environ.get("UPLOAD_WORKERS", "3"))
 
 # .env laden – zuerst aus /app/data/settings.env, Fallback auf /app/config/.env
 load_dotenv(Path("/app/data/settings.env"))
@@ -92,8 +96,34 @@ def load_providers(config: dict) -> list[BaseProvider]:
 # ── Haupt-Workflow ─────────────────────────────────────────────────────────────
 
 
+def _upload_worker(
+    provider_name: str,
+    invoice: Invoice,
+    provider_tags: list[str],
+    correspondent: str | None,
+) -> tuple[str, object, str | None]:
+    """Upload einer Rechnung in einem eigenen Thread.
+    Gibt (invoice_id, paperless_task_id_or_None, error_message_or_None) zurück."""
+    from app.paperless_client import PaperlessClient  # je Thread eigene Session
+
+    paperless = PaperlessClient()
+    all_tags = provider_tags + invoice.extra_tags
+    try:
+        result = paperless.upload_document(
+            file_path=invoice.file_path,
+            title=invoice.title,
+            tags=all_tags,
+            correspondent=correspondent,
+            created_date=invoice.date,
+        )
+        return (invoice.invoice_id, result, None)
+    except Exception as e:
+        return (invoice.invoice_id, None, str(e))
+
+
 def run_once() -> None:
     """Ein kompletter Durchlauf: alle Provider → Download → Upload."""
+    state.reset_progress()
     logger.info("=" * 60)
     logger.info("Starte Rechnungs-Fetch...")
     logger.info("=" * 60)
@@ -122,51 +152,63 @@ def run_once() -> None:
     total_new = 0
 
     for provider in providers:
-        logger.info(
-            "── Provider: %s ──────────────────────────", provider.provider_name
-        )
+        pname = provider.provider_name
+        logger.info("── Provider: %s ──────────────────────────", pname)
+
+        # ── Phase 1: Discovery + Download ─────────────────────────────────────
+        state.set_phase("discover", pname)
         try:
             invoices: list[Invoice] = provider.fetch_invoices()
         except Exception as e:
-            logger.exception("Provider '%s' abgestürzt: %s", provider.provider_name, e)
+            logger.exception("Provider '%s' abgestürzt: %s", pname, e)
             continue
 
+        # ── Phase 2: Filtern + DB-Vorbereitung ────────────────────────────────
+        to_upload: list[Invoice] = []
         for invoice in invoices:
-            # Schon verarbeitet?
-            if database.is_processed(provider.provider_name, invoice.invoice_id):
+            if database.is_processed(pname, invoice.invoice_id):
                 logger.debug("Bereits hochgeladen: %s", invoice.invoice_id)
                 continue
+            database.mark_pending(pname, invoice.invoice_id, invoice.file_path.name)
+            to_upload.append(invoice)
 
-            database.mark_pending(
-                provider.provider_name,
-                invoice.invoice_id,
-                invoice.file_path.name,
-            )
+        if not to_upload:
+            logger.info("Keine neuen Rechnungen für %s", pname)
+            continue
 
-            # Upload zu Paperless
-            logger.info("Uploade: %s → %s", invoice.invoice_id, invoice.title)
-            all_tags = provider.tags + invoice.extra_tags
-            result = paperless.upload_document(
-                file_path=invoice.file_path,
-                title=invoice.title,
-                tags=all_tags,
-                correspondent=provider.correspondent,
-                created_date=invoice.date,
-            )
+        # ── Phase 3: Parallel-Upload ───────────────────────────────────────────
+        state.set_phase("upload", pname, total=len(to_upload))
+        logger.info("Uploade %d Rechnungen (max. %d parallel)…", len(to_upload), UPLOAD_WORKERS)
 
-            if result is not None:
-                database.mark_uploaded(
-                    provider.provider_name, invoice.invoice_id, result
-                )
-                total_new += 1
-                logger.info("✓ Hochgeladen: %s (Task: %s)", invoice.title, result)
-            else:
-                database.mark_failed(
-                    provider.provider_name, invoice.invoice_id, "Upload fehlgeschlagen"
-                )
-                logger.error("✗ Upload fehlgeschlagen: %s", invoice.invoice_id)
+        with ThreadPoolExecutor(max_workers=UPLOAD_WORKERS) as executor:
+            future_map = {
+                executor.submit(_upload_worker, pname, inv, provider.tags, provider.correspondent): inv
+                for inv in to_upload
+            }
+            for future in as_completed(future_map):
+                inv = future_map[future]
+                state.tick(inv.invoice_id)
+                try:
+                    inv_id, task_id, error = future.result()
+                    if task_id is not None:
+                        database.mark_uploaded(pname, inv_id, task_id)
+                        total_new += 1
+                        logger.info("✓ %s (Task: %s)", inv.title[:60], task_id)
+                    else:
+                        database.mark_failed(
+                            pname, inv_id,
+                            error or "Upload fehlgeschlagen",
+                            error_type="upload_failed",
+                        )
+                        logger.error("✗ Upload fehlgeschlagen: %s – %s", inv_id, error)
+                except Exception as exc:
+                    database.mark_failed(
+                        pname, inv.invoice_id, str(exc), error_type="upload_failed"
+                    )
+                    logger.error("✗ Fehler bei %s: %s", inv.invoice_id, exc)
 
-    # Statistik
+    # ── Fertig ────────────────────────────────────────────────────────────────
+    state.reset_progress()
     logger.info("=" * 60)
     logger.info("Fertig! %d neue Rechnungen hochgeladen.", total_new)
     stats = database.get_stats()

@@ -24,7 +24,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from app import database, otp_state
+from app import database, otp_state, state
 from app.version import __version__
 
 logger = logging.getLogger("web")
@@ -78,6 +78,15 @@ async def get_stats():
         "last_run": _last_run,
         "running": _run_lock.locked(),
         "version": __version__,
+    }
+
+
+@app.get("/api/progress")
+async def get_progress():
+    """Fortschritt des aktuellen Scan-Laufs."""
+    return {
+        "running": _run_lock.locked(),
+        **state.scan_progress,
     }
 
 
@@ -542,6 +551,33 @@ async def submit_otp(body: OtpSubmit):
         raise HTTPException(400, "Kein OTP angefordert")
     otp_state.submit_otp(body.code)
     return {"ok": True}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  API – Paperless-NGX Metadaten (Korrespondenten, Tags)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/paperless/correspondents")
+async def get_paperless_correspondents():
+    """Lädt alle Korrespondenten aus Paperless-NGX für das Dropdown."""
+    try:
+        from app.paperless_client import PaperlessClient
+        client = PaperlessClient()
+        return {"correspondents": client.list_correspondents()}
+    except Exception as e:
+        return {"correspondents": [], "error": str(e)}
+
+
+@app.get("/api/paperless/tags")
+async def get_paperless_tags():
+    """Lädt alle Tags aus Paperless-NGX für das Dropdown."""
+    try:
+        from app.paperless_client import PaperlessClient
+        client = PaperlessClient()
+        return {"tags": client.list_tags()}
+    except Exception as e:
+        return {"tags": [], "error": str(e)}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

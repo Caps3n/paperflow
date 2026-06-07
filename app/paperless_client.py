@@ -127,8 +127,11 @@ class PaperlessClient:
             )
             r.raise_for_status()
             results = r.json().get("results", [])
-            if results:
-                return results[0]["id"]
+            # Exakten Treffer suchen (case-insensitive) – verhindert Fehlzuordnungen
+            for res in results:
+                if res["name"].strip().lower() == name.strip().lower():
+                    return res["id"]
+            # Nicht gefunden → neu erstellen
             r = self.session.post(
                 self._url("correspondents/"),
                 json={"name": name},
@@ -139,3 +142,41 @@ class PaperlessClient:
         except Exception as e:
             logger.warning("Korrespondent '%s' nicht gesetzt: %s", name, e)
             return None
+
+    def list_correspondents(self) -> list[dict]:
+        """Gibt alle Korrespondenten aus Paperless-NGX zurück (paginiert)."""
+        try:
+            results = []
+            url = self._url("correspondents/")
+            while url:
+                r = self.session.get(url, params={"page_size": 100}, timeout=10)
+                r.raise_for_status()
+                data = r.json()
+                results.extend(data.get("results", []))
+                url = data.get("next")  # nächste Seite
+            return sorted(
+                [{"id": c["id"], "name": c["name"]} for c in results],
+                key=lambda x: x["name"].lower(),
+            )
+        except Exception as e:
+            logger.warning("Korrespondenten konnten nicht geladen werden: %s", e)
+            return []
+
+    def list_tags(self) -> list[dict]:
+        """Gibt alle Tags aus Paperless-NGX zurück (paginiert)."""
+        try:
+            results = []
+            url = self._url("tags/")
+            while url:
+                r = self.session.get(url, params={"page_size": 100}, timeout=10)
+                r.raise_for_status()
+                data = r.json()
+                results.extend(data.get("results", []))
+                url = data.get("next")
+            return sorted(
+                [{"id": t["id"], "name": t["name"]} for t in results],
+                key=lambda x: x["name"].lower(),
+            )
+        except Exception as e:
+            logger.warning("Tags konnten nicht geladen werden: %s", e)
+            return []

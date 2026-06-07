@@ -184,10 +184,21 @@
       <h1>Dashboard</h1>
       <p class="subtitle">Übersicht aller Rechnungen und letzter Lauf</p>
 
-      <div class="row" style="margin-bottom:20px">
+      <div class="row" style="margin-bottom:12px">
         <div id="run-status" class="row"><span class="dot dot-green"></span> <span style="color:var(--muted);font-size:13px">Bereit</span></div>
         <div class="spacer"></div>
         <button class="btn btn-primary" id="btn-run">▶ Jetzt ausführen</button>
+      </div>
+      <!-- Fortschrittsbalken (sichtbar während Scan läuft) -->
+      <div id="progress-wrap" style="display:none;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:4px">
+          <span id="progress-label">Initialisiere…</span>
+          <span id="progress-pct">0%</span>
+        </div>
+        <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden">
+          <div id="progress-bar" style="height:100%;width:0%;background:var(--accent);border-radius:4px;transition:width 0.4s ease"></div>
+        </div>
+        <div id="progress-current" style="font-size:11px;color:var(--muted);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
       </div>
 
       <div class="stats" id="stats-grid">
@@ -453,6 +464,7 @@ async function loadStats() {
   dot.className = "dot " + (running ? "dot-yellow" : "dot-green");
   statusText.textContent = running ? "Läuft gerade…" : "Bereit";
   document.getElementById("btn-run").disabled = running;
+  updateProgress(running);
 
   // Last run
   if (last_run.time) {
@@ -492,6 +504,41 @@ document.getElementById("btn-run").addEventListener("click", async () => {
     setTimeout(loadStats, 1000);
   } catch(e) { toast(e.message, "err"); }
 });
+
+// ── FORTSCHRITTSBALKEN ─────────────────────────────────────────
+const PHASE_LABELS = { discover: "🔍 Erkunde Bestellungen…", download: "⬇ Lade PDFs…", upload: "☁ Lade zu Paperless hoch…", "": "" };
+let _progressInterval = null;
+
+async function updateProgress(running) {
+  const wrap = document.getElementById("progress-wrap");
+  if (!running) {
+    wrap.style.display = "none";
+    if (_progressInterval) { clearInterval(_progressInterval); _progressInterval = null; }
+    return;
+  }
+  wrap.style.display = "block";
+  if (!_progressInterval) {
+    _progressInterval = setInterval(fetchProgress, 1500);
+  }
+  await fetchProgress();
+}
+
+async function fetchProgress() {
+  try {
+    const p = await api("GET", "/api/progress");
+    if (!p.running) {
+      document.getElementById("progress-wrap").style.display = "none";
+      if (_progressInterval) { clearInterval(_progressInterval); _progressInterval = null; }
+      return;
+    }
+    const label = (PHASE_LABELS[p.phase] || p.phase) + (p.provider ? ` (${p.provider})` : "");
+    const pct = p.total > 0 ? Math.round(p.done / p.total * 100) : 0;
+    document.getElementById("progress-label").textContent = label || "Initialisiere…";
+    document.getElementById("progress-pct").textContent = p.total > 0 ? `${p.done}/${p.total} (${pct}%)` : "";
+    document.getElementById("progress-bar").style.width = (p.total > 0 ? pct : 15) + "%";
+    document.getElementById("progress-current").textContent = p.current ? `→ ${p.current}` : "";
+  } catch(e) { /* ignore */ }
+}
 
 // ── SETTINGS ───────────────────────────────────────────────────
 async function loadSettings() {
@@ -583,13 +630,16 @@ async function toggleSettings(name) {
     api("GET", "/api/providers").then(d => d.providers.find(p => p.name === name)),
   ]);
   const container = document.getElementById(`psettings-fields-${name}`);
+  const currCorr = providerData?.correspondent || "";
   let html = "";
   // Paperless-Ziel-Einstellungen
   html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
     <div class="form-group"><label>Tags (kommasepariert)</label>
       <input type="text" id="ptags-${name}" value="${(providerData?.tags||[]).join(",")}" placeholder="Rechnung, Amazon"></div>
-    <div class="form-group"><label>Korrespondent</label>
-      <input type="text" id="pcorr-${name}" value="${providerData?.correspondent||""}" placeholder="Amazon DE"></div>
+    <div class="form-group"><label>Korrespondent <span style="font-size:10px;color:var(--muted);font-weight:400">aus Paperless</span></label>
+      <select id="pcorr-${name}">
+        <option value="">Lade…</option>
+      </select></div>
   </div>`;
   // Provider-spezifische Env-Felder
   if (settingsData.fields.length > 0) {
@@ -635,6 +685,33 @@ async function toggleSettings(name) {
   }
 
   container.innerHTML = html;
+  loadPaperlessCorrespondents(name, currCorr);
+}
+
+async function loadPaperlessCorrespondents(providerName, currentValue) {
+  const sel = document.getElementById(`pcorr-${providerName}`);
+  if (!sel) return;
+  try {
+    const data = await api("GET", "/api/paperless/correspondents");
+    const corrs = data.correspondents || [];
+    sel.innerHTML = '<option value="">— kein Korrespondent —</option>';
+    for (const c of corrs) {
+      const opt = document.createElement("option");
+      opt.value = c.name;
+      opt.textContent = c.name;
+      if (c.name === currentValue) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    if (currentValue && !corrs.find(c => c.name === currentValue)) {
+      const opt = document.createElement("option");
+      opt.value = currentValue;
+      opt.textContent = `${currentValue} (nicht in Paperless)`;
+      opt.selected = true;
+      sel.insertBefore(opt, sel.children[1]);
+    }
+  } catch(e) {
+    sel.outerHTML = `<input type="text" id="pcorr-${providerName}" value="${currentValue}" placeholder="Amazon DE" autocomplete="off">`;
+  }
 }
 
 async function importCookies(name) {
@@ -760,6 +837,11 @@ async function loadHistory() {
     const paperlessLink = inv.paperless_id && paperlessUrl
       ? `<a href="${paperlessUrl}/documents/${inv.paperless_id}/" target="_blank" style="color:var(--accent);font-size:11px;margin-left:6px" title="In Paperless öffnen">↗</a>`
       : "";
+    // Fehler-Kategorie Badge
+    const ERROR_LABELS = { no_pdf: "kein PDF", download_failed: "Download ✗", upload_failed: "Upload ✗", other: "Fehler" };
+    const errorBadge = inv.status === "failed" && inv.error_type
+      ? ` <span class="badge badge-red" style="font-size:10px;margin-left:4px" title="${inv.filename||''}">${ERROR_LABELS[inv.error_type]||inv.error_type}</span>`
+      : "";
     const retryBtn = inv.status !== "uploaded"
       ? `<button class="btn btn-ghost btn-sm" onclick="retryInvoice(${inv.id})" title="Erneut versuchen">🔄</button>`
       : "";
@@ -767,7 +849,7 @@ async function loadHistory() {
       <td><input type="checkbox" class="row-cb" value="${inv.id}" onchange="onRowCheck()"></td>
       <td><span style="font-size:16px">${PROVIDER_ICONS[inv.provider]||"📦"}</span> ${inv.provider}</td>
       <td style="font-family:monospace;font-size:12px">${inv.invoice_id}</td>
-      <td><span class="${statusCls}">${statusLabel}</span>${paperlessLink}</td>
+      <td><span class="${statusCls}">${statusLabel}</span>${errorBadge}${paperlessLink}</td>
       <td style="color:var(--muted)">${date}</td>
       <td style="text-align:right;display:flex;gap:6px;justify-content:flex-end">
         ${retryBtn}
