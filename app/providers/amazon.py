@@ -40,6 +40,7 @@ _CDP_URL = os.environ.get("CHROME_CDP_URL", "").strip()
 # Xvfb (pyvirtualdisplay) – Fallback falls kein CDP verfügbar
 try:
     from pyvirtualdisplay import Display as _XvfbDisplay
+
     _HAS_XVFB = True
 except ImportError:
     _HAS_XVFB = False
@@ -102,6 +103,7 @@ class AmazonProvider(BaseProvider):
 
         # Warten bis Chrome bereit ist (Container-Start kann etwas dauern)
         import urllib.request
+
         for attempt in range(30):
             try:
                 urllib.request.urlopen(f"{_CDP_URL}/json/version", timeout=2)
@@ -117,7 +119,10 @@ class AmazonProvider(BaseProvider):
         with sync_playwright() as p:
             try:
                 browser = p.chromium.connect_over_cdp(_CDP_URL)
-                logger.info("Chrome CDP verbunden: %d Context(s) vorhanden", len(browser.contexts))
+                logger.info(
+                    "Chrome CDP verbunden: %d Context(s) vorhanden",
+                    len(browser.contexts),
+                )
             except Exception as e:
                 logger.error("CDP-Verbindung fehlgeschlagen: %s", e)
                 return []
@@ -183,7 +188,8 @@ class AmazonProvider(BaseProvider):
                 logger.info("Xvfb gestartet – Browser läuft als headless=False")
             except Exception as e:
                 logger.warning(
-                    "Xvfb konnte nicht gestartet werden: %s – fallback auf headless=True", e
+                    "Xvfb konnte nicht gestartet werden: %s – fallback auf headless=True",
+                    e,
                 )
 
         try:
@@ -203,7 +209,9 @@ class AmazonProvider(BaseProvider):
 
                 try:
                     if not self._ensure_logged_in(page):
-                        logger.error("Amazon Login fehlgeschlagen – überspringe Provider")
+                        logger.error(
+                            "Amazon Login fehlgeschlagen – überspringe Provider"
+                        )
                         return []
 
                     self._save_cookies(context)

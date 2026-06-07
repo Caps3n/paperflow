@@ -659,7 +659,9 @@ async def recorder_capture():
 
     cdp_url = os.environ.get("CHROME_CDP_URL", "").strip()
     if not cdp_url:
-        raise HTTPException(400, "Kein Browser verbunden – CHROME_CDP_URL nicht gesetzt")
+        raise HTTPException(
+            400, "Kein Browser verbunden – CHROME_CDP_URL nicht gesetzt"
+        )
 
     def _do_capture():
         from playwright.sync_api import sync_playwright
