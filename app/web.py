@@ -149,6 +149,19 @@ ENV_FIELDS = [
         "group": "Allgemein",
         "options": ["true", "false"],
     },
+    {
+        "key": "CHROME_CDP_URL",
+        "label": "Chrome CDP URL",
+        "type": "text",
+        "group": "Browser",
+        "placeholder": "http://chrome-desktop:9222",
+    },
+    {
+        "key": "UPLOAD_WORKERS",
+        "label": "Parallele Upload-Threads",
+        "type": "number",
+        "group": "Allgemein",
+    },
 ]
 
 # Provider-spezifische Einstellungen (werden ebenfalls in .env gespeichert)

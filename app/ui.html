@@ -557,8 +557,9 @@ async function loadSettings() {
       html += `<div class="form-group"><label>${f.label}</label>
         <select name="${f.key}">${f.options.map(o => `<option value="${o}"${o===val?" selected":""}>${o}</option>`).join("")}</select></div>`;
     } else {
+      const ph = f.placeholder ? ` placeholder="${f.placeholder}"` : "";
       html += `<div class="form-group"><label>${f.label}</label>
-        <input type="${f.type}" name="${f.key}" value="${val}" autocomplete="off"></div>`;
+        <input type="${f.type}" name="${f.key}" value="${val}"${ph} autocomplete="off"></div>`;
     }
   }
   if (currentGroup) html += `</div>`;
@@ -633,9 +634,12 @@ async function toggleSettings(name) {
   const currCorr = providerData?.correspondent || "";
   let html = "";
   // Paperless-Ziel-Einstellungen
+  const currTags = providerData?.tags || [];
   html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-    <div class="form-group"><label>Tags (kommasepariert)</label>
-      <input type="text" id="ptags-${name}" value="${(providerData?.tags||[]).join(",")}" placeholder="Rechnung, Amazon"></div>
+    <div class="form-group"><label>Tags <span style="font-size:10px;color:var(--muted);font-weight:400">aus Paperless</span></label>
+      <select id="ptags-${name}" multiple style="height:90px">
+        <option disabled>Lade…</option>
+      </select></div>
     <div class="form-group"><label>Korrespondent <span style="font-size:10px;color:var(--muted);font-weight:400">aus Paperless</span></label>
       <select id="pcorr-${name}">
         <option value="">Lade…</option>
@@ -685,7 +689,38 @@ async function toggleSettings(name) {
   }
 
   container.innerHTML = html;
+  loadPaperlessTags(name, currTags);
   loadPaperlessCorrespondents(name, currCorr);
+}
+
+async function loadPaperlessTags(providerName, selectedTags) {
+  const sel = document.getElementById(`ptags-${providerName}`);
+  if (!sel) return;
+  try {
+    const data = await api("GET", "/api/paperless/tags");
+    const tags = (data.tags || []).sort((a, b) => a.name.localeCompare(b.name));
+    sel.innerHTML = "";
+    for (const t of tags) {
+      const opt = document.createElement("option");
+      opt.value = t.name;
+      opt.textContent = t.name;
+      if (selectedTags.includes(t.name)) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    // Gespeicherte Tags die nicht in Paperless existieren trotzdem anzeigen
+    for (const tag of selectedTags) {
+      if (!tags.find(t => t.name === tag)) {
+        const opt = document.createElement("option");
+        opt.value = tag;
+        opt.textContent = `${tag} (lokal)`;
+        opt.selected = true;
+        sel.insertBefore(opt, sel.firstChild);
+      }
+    }
+  } catch(e) {
+    // Fallback: Textfeld
+    sel.outerHTML = `<input type="text" id="ptags-${providerName}" value="${selectedTags.join(",")}" placeholder="Rechnung, Amazon" autocomplete="off">`;
+  }
 }
 
 async function loadPaperlessCorrespondents(providerName, currentValue) {
@@ -729,7 +764,10 @@ async function saveProviderSettings(name) {
   const panel = document.getElementById(`psettings-${name}`);
   const card = document.getElementById(`pcard-${name}`);
   // Tags + Correspondent
-  const tags = (document.getElementById(`ptags-${name}`)?.value || "").split(",").map(t=>t.trim()).filter(Boolean);
+  const tagsEl = document.getElementById(`ptags-${name}`);
+  const tags = tagsEl?.tagName === "SELECT"
+    ? Array.from(tagsEl.selectedOptions).map(o => o.value)
+    : (tagsEl?.value || "").split(",").map(t=>t.trim()).filter(Boolean);
   const correspondent = document.getElementById(`pcorr-${name}`)?.value || "";
   const enabled = card.querySelector("input[type=checkbox]").checked;
   // Env-Felder
@@ -747,7 +785,10 @@ async function saveProviderSettings(name) {
 
 async function toggleProvider(name, enabled) {
   const panel = document.getElementById(`psettings-${name}`);
-  const tags = (document.getElementById(`ptags-${name}`)?.value || "").split(",").map(t=>t.trim()).filter(Boolean);
+  const tagsEl = document.getElementById(`ptags-${name}`);
+  const tags = tagsEl?.tagName === "SELECT"
+    ? Array.from(tagsEl.selectedOptions).map(o => o.value)
+    : (tagsEl?.value || "").split(",").map(t=>t.trim()).filter(Boolean);
   const correspondent = document.getElementById(`pcorr-${name}`)?.value || "";
   try {
     await api("PUT", `/api/providers/${name}`, { enabled, tags, correspondent });
