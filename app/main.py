@@ -28,13 +28,13 @@ from app.paperless_client import PaperlessClient
 from app.providers import BaseProvider, Invoice
 from app.version import __version__
 
-# Anzahl paralleler Upload-Threads (Standard: 3)
-UPLOAD_WORKERS = int(os.environ.get("UPLOAD_WORKERS") or "3")
+# .env laden – zuerst aus /app/data/settings.env (override=True damit docker-compose-Leerwerte überschrieben werden)
+load_dotenv(Path("/app/data/settings.env"), override=True)
+load_dotenv(Path("/app/config/.env"), override=False)
+load_dotenv(override=False)  # lokale .env für Entwicklung
 
-# .env laden – zuerst aus /app/data/settings.env, Fallback auf /app/config/.env
-load_dotenv(Path("/app/data/settings.env"))
-load_dotenv(Path("/app/config/.env"))
-load_dotenv()  # lokale .env für Entwicklung
+# Anzahl paralleler Upload-Threads (Standard: 3, nach load_dotenv lesen)
+UPLOAD_WORKERS = int(os.environ.get("UPLOAD_WORKERS") or "3")
 
 # ── Logging – in Datei UND stdout ─────────────────────────────────────────────
 LOG_PATH = Path("/app/data/fetcher.log")
