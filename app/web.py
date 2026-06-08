@@ -202,6 +202,15 @@ PROVIDER_ENV_FIELDS: dict[str, list[dict]] = {
         },
         {"key": "AMAZON_OTP_CODE", "label": "2FA OTP (einmalig)", "type": "text"},
     ],
+    "paypal": [
+        {"key": "PAYPAL_EMAIL", "label": "PayPal E-Mail", "type": "email"},
+        {"key": "PAYPAL_PASSWORD", "label": "PayPal Passwort", "type": "password"},
+        {
+            "key": "PAYPAL_MONTHS_BACK",
+            "label": "Monate rückwirkend (z.B. 24)",
+            "type": "number",
+        },
+    ],
 }
 
 

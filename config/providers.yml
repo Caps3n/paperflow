@@ -9,6 +9,11 @@ providers:
     # Paperless-Correspondent
     correspondent: "Amazon"
 
+  paypal:
+    enabled: false
+    tags: ["PayPal", "Kontoauszug"]
+    correspondent: "PayPal"
+
   # Weitere Provider können hier hinzugefügt werden:
   # ebay:
   #   enabled: false
