@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from app import database, otp_state, state
@@ -620,6 +620,16 @@ async def paperless_ping():
         raise
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.get("/api/debug/file/{filename}")
+async def debug_file(filename: str):
+    """Liefert Debug-Dateien aus /app/data (Screenshots, Logs) – nur PNG/JPG/TXT."""
+    allowed = {".png", ".jpg", ".jpeg", ".txt", ".log"}
+    path = Path("/app/data") / filename
+    if path.suffix.lower() not in allowed or not path.exists():
+        raise HTTPException(status_code=404, detail="Datei nicht gefunden")
+    return FileResponse(str(path))
 
 
 @app.get("/api/paperless/correspondents")
