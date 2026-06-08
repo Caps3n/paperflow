@@ -142,6 +142,23 @@ def get_all_invoices(
     return [dict(r) for r in rows]
 
 
+def count_invoices(
+    status: str | None = None,
+    provider: str | None = None,
+) -> int:
+    """Zählt Einträge mit optionalem Filter."""
+    query = "SELECT COUNT(*) FROM invoices WHERE 1=1"
+    params: list = []
+    if status:
+        query += " AND status=?"
+        params.append(status)
+    if provider:
+        query += " AND provider=?"
+        params.append(provider)
+    with get_connection() as conn:
+        return conn.execute(query, params).fetchone()[0]
+
+
 def delete_invoice(db_id: int) -> bool:
     """Löscht einen Eintrag aus der Datenbank (wird beim nächsten Lauf neu verarbeitet)."""
     with get_connection() as conn:

@@ -398,11 +398,16 @@ async def upload_provider(file: UploadFile = File(...)):
 
 
 @app.get("/api/history")
-async def get_history(status: str | None = None, provider: str | None = None):
+async def get_history(
+    status: str | None = None,
+    provider: str | None = None,
+    limit: int = 500,
+):
     rows = database.get_all_invoices(
-        limit=500, status=status or None, provider=provider or None
+        limit=limit, status=status or None, provider=provider or None
     )
-    return {"invoices": rows}
+    total = database.count_invoices(status=status or None, provider=provider or None)
+    return {"invoices": rows, "total": total}
 
 
 class BulkIds(BaseModel):
@@ -585,6 +590,23 @@ async def submit_otp(body: OtpSubmit):
 # ══════════════════════════════════════════════════════════════════════════════
 #  API – Paperless-NGX Metadaten (Korrespondenten, Tags)
 # ══════════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/paperless/ping")
+async def paperless_ping():
+    """Schneller Verbindungstest zu Paperless-NGX (kein vollständiger Tag-Load)."""
+    try:
+        from app.paperless_client import PaperlessClient
+
+        client = PaperlessClient()
+        ok = client.test_connection()
+        if ok:
+            return {"ok": True}
+        raise HTTPException(status_code=503, detail="Paperless nicht erreichbar")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @app.get("/api/paperless/correspondents")

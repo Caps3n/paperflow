@@ -734,7 +734,8 @@ async function loadStats() {
 async function checkPaperlessStatus() {
   const badge = document.getElementById("paperless-badge");
   try {
-    await api("GET", "/api/paperless/tags");
+    // Schneller Ping – nur Verbindung prüfen, nicht alle Tags laden
+    await api("GET", "/api/paperless/ping");
     badge.className = "connection-badge ok";
     badge.textContent = t("paperless_ok");
   } catch {
