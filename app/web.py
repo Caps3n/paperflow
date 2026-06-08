@@ -115,7 +115,10 @@ async def trigger_run(body: RunRequest = RunRequest()):
 
                 if selected_years is not None:
                     import os
-                    os.environ["PAPERFLOW_YEARS_FILTER"] = ",".join(str(y) for y in selected_years)
+
+                    os.environ["PAPERFLOW_YEARS_FILTER"] = ",".join(
+                        str(y) for y in selected_years
+                    )
                 else:
                     os.environ.pop("PAPERFLOW_YEARS_FILTER", None)
 
