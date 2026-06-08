@@ -188,13 +188,22 @@ class PaypalProvider(BaseProvider):
                 continue
 
         if not email_field:
-            # Debug: alle sichtbaren Inputs loggen
-            inputs = page.query_selector_all("input:visible")
+            # Debug: Screenshot + alle sichtbaren Inputs loggen
+            try:
+                screenshot_path = Path("/app/data/paypal_debug_email.png")
+                page.screenshot(path=str(screenshot_path))
+                logger.error("Debug-Screenshot gespeichert: %s", screenshot_path)
+            except Exception:
+                pass
+            inputs = page.query_selector_all("input")
             logger.error(
-                "E-Mail-Feld nicht gefunden. Sichtbare Inputs: %s | URL: %s",
+                "E-Mail-Feld nicht gefunden. Alle Inputs: %s | URL: %s",
                 [
-                    f"{i.get_attribute('id') or ''}|{i.get_attribute('name') or ''}|{i.get_attribute('type') or ''}"
-                    for i in inputs[:8]
+                    f"id={i.get_attribute('id') or '-'} "
+                    f"name={i.get_attribute('name') or '-'} "
+                    f"type={i.get_attribute('type') or '-'} "
+                    f"visible={i.is_visible()}"
+                    for i in inputs[:10]
                 ],
                 page.url[:80],
             )
