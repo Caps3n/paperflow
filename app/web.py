@@ -95,24 +95,37 @@ async def get_progress():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+class RunRequest(BaseModel):
+    years: list[int] | None = None  # None = alle Jahre, [] = nur aktuelles Jahr
+
+
 @app.post("/api/run")
-async def trigger_run():
+async def trigger_run(body: RunRequest = RunRequest()):
     if _run_lock.locked():
         raise HTTPException(status_code=409, detail="Läuft bereits")
+
+    selected_years = body.years  # z.B. [2024, 2023] oder None
 
     def _do_run():
         with _run_lock:
             _last_run["time"] = datetime.utcnow().isoformat()
             _last_run["status"] = "running"
             try:
-                # Import hier um zirkuläre Imports zu vermeiden
                 from app.main import run_once
+
+                if selected_years is not None:
+                    import os
+                    os.environ["PAPERFLOW_YEARS_FILTER"] = ",".join(str(y) for y in selected_years)
+                else:
+                    os.environ.pop("PAPERFLOW_YEARS_FILTER", None)
 
                 run_once()
                 _last_run["status"] = "ok"
             except Exception as e:
                 _last_run["status"] = f"Fehler: {e}"
                 logger.exception("run_once fehlgeschlagen")
+            finally:
+                os.environ.pop("PAPERFLOW_YEARS_FILTER", None)
 
     threading.Thread(target=_do_run, daemon=True).start()
     return {"started": True}

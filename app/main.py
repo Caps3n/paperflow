@@ -109,6 +109,10 @@ def _upload_worker(
     paperless = PaperlessClient()
     all_tags = provider_tags + invoice.extra_tags
     try:
+        # Duplikatsprüfung: Dateiname bereits in Paperless?
+        if paperless.document_exists(invoice.file_path.name):
+            logger.info("⏭ Duplikat übersprungen: %s", invoice.file_path.name)
+            return (invoice.invoice_id, "duplicate", None)
         result = paperless.upload_document(
             file_path=invoice.file_path,
             title=invoice.title,
@@ -194,7 +198,10 @@ def run_once() -> None:
                 state.tick(inv.invoice_id)
                 try:
                     inv_id, task_id, error = future.result()
-                    if task_id is not None:
+                    if task_id == "duplicate":
+                        database.mark_uploaded(pname, inv_id, "duplicate")
+                        logger.info("⏭ Duplikat: %s", inv.title[:60])
+                    elif task_id is not None:
                         database.mark_uploaded(pname, inv_id, task_id)
                         total_new += 1
                         logger.info("✓ %s (Task: %s)", inv.title[:60], task_id)

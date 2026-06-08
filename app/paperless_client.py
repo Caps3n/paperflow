@@ -162,6 +162,29 @@ class PaperlessClient:
             logger.warning("Korrespondenten konnten nicht geladen werden: %s", e)
             return []
 
+    def document_exists(self, filename: str) -> bool:
+        """Prüft ob ein Dokument mit diesem Dateinamen bereits in Paperless existiert."""
+        try:
+            # Suche nach dem Dateinamen ohne Erweiterung als Titel
+            stem = Path(filename).stem
+            r = self.session.get(
+                self._url("documents/"),
+                params={"query": stem, "page_size": 25},
+                timeout=10,
+            )
+            r.raise_for_status()
+            results = r.json().get("results", [])
+            for doc in results:
+                # Exakter Titelvergleich (Paperless speichert den Dateinamen oft als Titel)
+                if doc.get("original_file_name", "") == filename:
+                    return True
+                if doc.get("title", "").strip() == stem:
+                    return True
+            return False
+        except Exception as e:
+            logger.warning("Duplikatsprüfung fehlgeschlagen für '%s': %s", filename, e)
+            return False  # Im Zweifelsfall hochladen
+
     def list_tags(self) -> list[dict]:
         """Gibt alle Tags aus Paperless-NGX zurück (paginiert)."""
         try:

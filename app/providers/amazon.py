@@ -639,7 +639,16 @@ class AmazonProvider(BaseProvider):
             return result
 
         # ── Vollständiger Scan: alle Jahre seit start_year ──────────────────────
-        years = list(range(current_year, self.start_year - 1, -1))
+        # PAPERFLOW_YEARS_FILTER: kommaseparierte Jahre für gezielten Scan (aus UI)
+        _years_filter = os.environ.get("PAPERFLOW_YEARS_FILTER", "").strip()
+        if _years_filter:
+            try:
+                years = [int(y.strip()) for y in _years_filter.split(",") if y.strip()]
+                logger.info("Jahr-Filter aktiv: %s", years)
+            except ValueError:
+                years = list(range(current_year, self.start_year - 1, -1))
+        else:
+            years = list(range(current_year, self.start_year - 1, -1))
         skipped = sum(
             1
             for y in years
