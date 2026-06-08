@@ -340,7 +340,7 @@
       <div id="provider-list"></div>
 
       <!-- Recorder (nur wenn Chrome verfügbar) -->
-      <div class="recorder-card" id="recorder-card" style="display:none">
+      <div class="recorder-card" id="recorder-card">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
           <span style="font-size:20px">🔴</span>
           <div>
@@ -746,7 +746,7 @@ async function checkPaperlessStatus() {
 async function loadRecentUploads() {
   const el = document.getElementById("recent-uploads");
   try {
-    const { invoices } = await api("GET", "/api/history?limit=8&status=uploaded");
+    const { invoices } = await api("GET", "/api/history?limit=10&status=uploaded");
     if (!invoices || !invoices.length) {
       el.innerHTML = `<div style="color:var(--muted);font-size:13px;text-align:center;padding:12px">${t("no_invoices")}</div>`;
       return;
@@ -755,7 +755,12 @@ async function loadRecentUploads() {
       invoices.map(inv => `<tr>
         <td>${PROVIDER_ICONS[inv.provider]||"📦"} <span style="font-family:monospace;font-size:12px">${inv.invoice_id}</span></td>
         <td>${inv.updated_at ? new Date(inv.updated_at + "Z").toLocaleDateString(_lang === "de" ? "de-DE" : "en-GB") : "–"}</td>
-      </tr>`).join("") + `</table>`;
+      </tr>`).join("") +
+      `</table><div style="margin-top:10px;text-align:right">
+        <a href="#history" onclick="showPage('history')" style="color:var(--accent);font-size:12px;text-decoration:none">
+          ${_lang === "de" ? "→ Alle im Verlauf" : "→ View all in History"}
+        </a>
+      </div>`;
   } catch {
     el.innerHTML = `<div style="color:var(--muted);font-size:13px">${t("loading")}</div>`;
   }
@@ -1201,19 +1206,21 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") { if (_brows
 
 async function checkBrowserStatus() {
   const badge = document.getElementById("browser-status-badge");
-  const card = document.getElementById("recorder-card");
+  const btnOpen = document.querySelector("#recorder-card .btn-primary");
+  const btnCapture = document.getElementById("btn-capture");
   try {
     const { available, reason } = await api("GET", "/api/browser/status");
     if (available) {
       if (badge) { badge.className = "badge badge-green"; badge.textContent = t("browser_ready"); }
-      if (card) card.style.display = "block";
+      if (btnOpen) btnOpen.disabled = false;
+      if (btnCapture) btnCapture.disabled = false;
     } else {
       if (badge) { badge.className = "badge badge-red"; badge.textContent = t("browser_offline"); badge.title = reason || ""; }
-      if (card) card.style.display = "none";
+      // Karte bleibt sichtbar, Aufnehmen-Button deaktiviert (kein CDP)
+      if (btnCapture) { btnCapture.disabled = true; btnCapture.title = reason || "Kein Browser verbunden"; }
     }
   } catch {
     if (badge) { badge.className = "badge badge-yellow"; badge.textContent = "…"; }
-    if (card) card.style.display = "none";
   }
 }
 
