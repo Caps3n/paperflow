@@ -126,6 +126,28 @@ class PaypalProvider(BaseProvider):
             logger.warning("Login-Check fehlgeschlagen: %s", e)
             return False
 
+    def _dismiss_cookie_banner(self, page: Page) -> None:
+        """Klickt Cookie-Banner / DSGVO-Overlays weg falls vorhanden."""
+        selectors = [
+            "button[id*='accept'], button[id*='cookie'], button[id*='consent']",
+            "button:has-text('Alle akzeptieren')",
+            "button:has-text('Accept All')",
+            "button:has-text('Akzeptieren')",
+            "button:has-text('Zustimmen')",
+            "#acceptAllButton",
+            "[data-testid='accept-all-button']",
+        ]
+        for sel in selectors:
+            try:
+                btn = page.query_selector(sel)
+                if btn and btn.is_visible():
+                    btn.click()
+                    logger.info("Cookie-Banner weggeklickt: %s", sel)
+                    _sleep(0.5, 1)
+                    return
+            except Exception:
+                continue
+
     def _login(self, page: Page) -> bool:
         """Vollständiger Login-Flow mit E-Mail, Passwort und optionalem OTP."""
         if not self.email or not self.password:
@@ -137,20 +159,57 @@ class PaypalProvider(BaseProvider):
         page.wait_for_load_state("domcontentloaded")
         _sleep(2, 4)
 
+        # Cookie-Banner wegklicken
+        self._dismiss_cookie_banner(page)
+
+        # E-Mail-Selektoren – PayPal ändert diese regelmäßig
+        EMAIL_SELECTORS = (
+            "#email",
+            "#splitEmail",
+            "input[name='login_email']",
+            "input[type='email']",
+            "input[placeholder*='E-Mail']",
+            "input[placeholder*='email']",
+            "input[placeholder*='Email']",
+            "input[autocomplete='email']",
+            "input[autocomplete='username']",
+        )
+
         # E-Mail eingeben
-        try:
-            email_field = page.wait_for_selector(
-                "input[type='email'], #email, input[name='login_email']",
-                timeout=10_000,
+        email_field = None
+        for sel in EMAIL_SELECTORS:
+            try:
+                email_field = page.wait_for_selector(sel, timeout=5_000)
+                if email_field and email_field.is_visible():
+                    logger.info("E-Mail-Feld gefunden: %s", sel)
+                    break
+                email_field = None
+            except Exception:
+                continue
+
+        if not email_field:
+            # Debug: alle sichtbaren Inputs loggen
+            inputs = page.query_selector_all("input:visible")
+            logger.error(
+                "E-Mail-Feld nicht gefunden. Sichtbare Inputs: %s | URL: %s",
+                [
+                    f"{i.get_attribute('id') or ''}|{i.get_attribute('name') or ''}|{i.get_attribute('type') or ''}"
+                    for i in inputs[:8]
+                ],
+                page.url[:80],
             )
+            return False
+
+        try:
             email_field.fill(self.email)
             _sleep(0.5, 1.5)
 
             # "Weiter"-Button
             next_btn = page.query_selector(
-                "button[type='submit'], #btnNext, button:has-text('Weiter'), button:has-text('Next')"
+                "#btnNext, button[type='submit'], "
+                "button:has-text('Weiter'), button:has-text('Next')"
             )
-            if next_btn:
+            if next_btn and next_btn.is_visible():
                 next_btn.click()
             else:
                 email_field.press("Enter")
@@ -159,19 +218,42 @@ class PaypalProvider(BaseProvider):
             logger.error("E-Mail-Eingabe fehlgeschlagen: %s", e)
             return False
 
-        # Passwort eingeben (nach Klick auf "Weiter" erscheint das Passwort-Feld)
+        # Cookie-Banner ggf. nochmal (nach Seitenübergang)
+        self._dismiss_cookie_banner(page)
+
+        # Passwort-Selektoren
+        PWD_SELECTORS = (
+            "#password",
+            "input[name='login_password']",
+            "input[type='password']",
+            "input[autocomplete='current-password']",
+        )
+
+        pwd_field = None
+        for sel in PWD_SELECTORS:
+            try:
+                pwd_field = page.wait_for_selector(sel, timeout=8_000)
+                if pwd_field and pwd_field.is_visible():
+                    logger.info("Passwort-Feld gefunden: %s", sel)
+                    break
+                pwd_field = None
+            except Exception:
+                continue
+
+        if not pwd_field:
+            logger.error("Passwort-Feld nicht gefunden. URL: %s", page.url[:80])
+            return False
+
         try:
-            pwd_field = page.wait_for_selector(
-                "input[type='password'], #password, input[name='login_password']",
-                timeout=10_000,
-            )
             pwd_field.fill(self.password)
             _sleep(0.5, 1.5)
 
             login_btn = page.query_selector(
-                "button[type='submit'], #btnLogin, button:has-text('Einloggen'), button:has-text('Log In')"
+                "#btnLogin, button[type='submit'], "
+                "button:has-text('Einloggen'), button:has-text('Log In'), "
+                "button:has-text('Anmelden')"
             )
-            if login_btn:
+            if login_btn and login_btn.is_visible():
                 login_btn.click()
             else:
                 pwd_field.press("Enter")
