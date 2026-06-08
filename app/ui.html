@@ -238,7 +238,7 @@
       <div id="provider-list"></div>
 
       <!-- Recorder Card -->
-      <div class="recorder-card" id="recorder-card">
+      <div class="recorder-card" id="recorder-card" style="display:none">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
           <span style="font-size:20px">🔴</span>
           <div>
@@ -1087,20 +1087,19 @@ document.addEventListener("keydown", e => {
 // ── Recorder ───────────────────────────────────────────────────
 async function checkBrowserStatus() {
   const badge = document.getElementById("browser-status-badge");
-  if (!badge) return;
+  const card = document.getElementById("recorder-card");
   try {
     const { available, reason } = await api("GET", "/api/browser/status");
     if (available) {
-      badge.className = "badge badge-green";
-      badge.textContent = "✓ Browser bereit";
+      if (badge) { badge.className = "badge badge-green"; badge.textContent = "✓ Browser bereit"; }
+      if (card) card.style.display = "block";
     } else {
-      badge.className = "badge badge-red";
-      badge.textContent = "Browser nicht verbunden";
-      badge.title = reason || "";
+      if (badge) { badge.className = "badge badge-red"; badge.textContent = "Browser nicht verbunden"; badge.title = reason || ""; }
+      if (card) card.style.display = "none";
     }
   } catch {
-    badge.className = "badge badge-yellow";
-    badge.textContent = "Prüfe…";
+    if (badge) { badge.className = "badge badge-yellow"; badge.textContent = "Prüfe…"; }
+    if (card) card.style.display = "none";
   }
 }
 
