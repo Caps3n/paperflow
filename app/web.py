@@ -54,6 +54,35 @@ _run_lock = threading.Lock()
 _last_run = {"time": None, "status": None}
 
 
+def _do_run_locked(selected_years: list[int] | None = None) -> None:
+    """Führt run_once() aus – hält dabei immer den _run_lock."""
+    with _run_lock:
+        _last_run["time"] = datetime.utcnow().isoformat()
+        _last_run["status"] = "running"
+        try:
+            from app.main import run_once
+
+            if selected_years is not None:
+                os.environ["PAPERFLOW_YEARS_FILTER"] = ",".join(
+                    str(y) for y in selected_years
+                )
+            else:
+                os.environ.pop("PAPERFLOW_YEARS_FILTER", None)
+
+            run_once()
+            _last_run["status"] = "ok"
+        except Exception as e:
+            _last_run["status"] = f"Fehler: {e}"
+            logger.exception("run_once fehlgeschlagen")
+        finally:
+            os.environ.pop("PAPERFLOW_YEARS_FILTER", None)
+
+
+def trigger_startup_run() -> None:
+    """Startet den Startup-Run im Hintergrund – verwendet denselben Lock wie der Web-UI-Trigger."""
+    threading.Thread(target=_do_run_locked, daemon=True).start()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  UI
 # ══════════════════════════════════════════════════════════════════════════════
@@ -105,32 +134,7 @@ async def trigger_run(body: RunRequest = RunRequest()):
         raise HTTPException(status_code=409, detail="Läuft bereits")
 
     selected_years = body.years  # z.B. [2024, 2023] oder None
-
-    def _do_run():
-        with _run_lock:
-            _last_run["time"] = datetime.utcnow().isoformat()
-            _last_run["status"] = "running"
-            try:
-                from app.main import run_once
-
-                if selected_years is not None:
-                    import os
-
-                    os.environ["PAPERFLOW_YEARS_FILTER"] = ",".join(
-                        str(y) for y in selected_years
-                    )
-                else:
-                    os.environ.pop("PAPERFLOW_YEARS_FILTER", None)
-
-                run_once()
-                _last_run["status"] = "ok"
-            except Exception as e:
-                _last_run["status"] = f"Fehler: {e}"
-                logger.exception("run_once fehlgeschlagen")
-            finally:
-                os.environ.pop("PAPERFLOW_YEARS_FILTER", None)
-
-    threading.Thread(target=_do_run, daemon=True).start()
+    threading.Thread(target=_do_run_locked, args=(selected_years,), daemon=True).start()
     return {"started": True}
 
 

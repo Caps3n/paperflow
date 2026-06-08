@@ -257,11 +257,11 @@ def main() -> None:
     t = threading.Thread(target=_scheduler_loop, args=(interval_hours,), daemon=True)
     t.start()
 
-    if run_on_startup:
-        threading.Thread(target=run_once, daemon=True).start()
+    # Web-Server (blockiert Hauptthread) – Startup-Run läuft über web.py-Lock
+    from app.web import app as web_app, trigger_startup_run
 
-    # Web-Server (blockiert Hauptthread)
-    from app.web import app as web_app
+    if run_on_startup:
+        trigger_startup_run()
 
     uvicorn.run(web_app, host="0.0.0.0", port=8080, log_level="warning")
 
