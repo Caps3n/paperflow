@@ -427,6 +427,7 @@ class MeinproviderProvider(BaseProvider):
         <select id="history-filter-provider" style="width:auto;padding:7px 12px">
           <option value="" data-i18n="all_provider">Alle Provider</option>
           <option value="amazon">Amazon</option>
+          <option value="ikea">IKEA</option>
         </select>
         <button class="btn btn-ghost btn-sm" onclick="loadHistory()">🔄 <span data-i18n="btn_refresh">Aktualisieren</span></button>
         <span id="history-count" style="color:var(--muted);font-size:12px;margin-left:4px"></span>
@@ -1133,16 +1134,16 @@ async function loadHistory() {
       const stCls = inv.status === "uploaded" ? "status-uploaded" : inv.status === "failed" ? "status-failed" : inv.status === "duplicate" ? "status-duplicate" : "status-pending";
       const stIcon = inv.status === "uploaded" ? "✅" : inv.status === "failed" ? "❌" : inv.status === "duplicate" ? "⏭" : "⏳";
       const date = inv.updated_at ? new Date(inv.updated_at + "Z").toLocaleDateString(_lang === "de" ? "de-DE" : "en-GB") : "–";
-      return `<tr id="row-${inv.invoice_id}" class="${_selection.has(inv.invoice_id) ? "selected" : ""}">
-        <td><input type="checkbox" class="row-cb" ${_selection.has(inv.invoice_id) ? "checked" : ""}
-             onchange="toggleRow('${inv.invoice_id}', this.checked)"></td>
+      return `<tr id="row-${inv.id}" class="${_selection.has(inv.id) ? "selected" : ""}">
+        <td><input type="checkbox" class="row-cb" data-id="${inv.id}" ${_selection.has(inv.id) ? "checked" : ""}
+             onchange="toggleRow(${inv.id}, this.checked)"></td>
         <td><span class="tag">${PROVIDER_ICONS[inv.provider]||"📦"} ${inv.provider}</span></td>
         <td style="font-family:monospace;font-size:12px">${inv.invoice_id}</td>
         <td><span class="${stCls}">${stIcon} ${t(inv.status) || inv.status}</span></td>
         <td style="color:var(--muted)">${date}</td>
         <td style="text-align:right">
-          ${inv.status === "failed" ? `<button class="btn btn-ghost btn-sm" onclick="retryOne('${inv.provider}','${inv.invoice_id}')">🔄</button>` : ""}
-          <button class="btn btn-ghost btn-sm" onclick="deleteOne('${inv.provider}','${inv.invoice_id}')">🗑</button>
+          ${inv.status === "failed" ? `<button class="btn btn-ghost btn-sm" onclick="retryOne(${inv.id})">🔄</button>` : ""}
+          <button class="btn btn-ghost btn-sm" onclick="deleteOne(${inv.id})">🗑</button>
         </td>
       </tr>`;
     }).join("");
@@ -1155,22 +1156,22 @@ function toggleRow(id, checked) {
   updateBulkBar();
 }
 function toggleAll(checked) {
-  document.querySelectorAll(".row-cb").forEach(cb => { cb.checked = checked; toggleRow(cb.closest("tr").id.replace("row-",""), checked); });
+  document.querySelectorAll(".row-cb").forEach(cb => { cb.checked = checked; toggleRow(Number(cb.dataset.id), checked); });
 }
 function clearSelection() { _selection.clear(); document.querySelectorAll(".row-cb, #cb-all").forEach(cb => cb.checked = false); document.querySelectorAll("tr.selected").forEach(r => r.classList.remove("selected")); updateBulkBar(); }
 function updateBulkBar() {
   const bar = document.getElementById("bulk-bar");
   bar.classList.toggle("visible", _selection.size > 0);
-  document.getElementById("bulk-count").textContent = `${_selection.size} ausgewählt`;
+  document.getElementById("bulk-count").textContent = `${_selection.size} ${_lang === "de" ? "ausgewählt" : "selected"}`;
 }
-async function retryOne(provider, id) {
-  try { await api("POST", "/api/history/retry", { provider, invoice_id: id }); toast("🔄 Erneut gestartet", "ok"); loadHistory(); } catch(e) { toast(e.message, "err"); }
+async function retryOne(id) {
+  try { await api("POST", `/api/history/${id}/retry`); toast("🔄 " + t("retry"), "ok"); loadHistory(); } catch(e) { toast(e.message, "err"); }
 }
-async function deleteOne(provider, id) {
-  try { await api("DELETE", `/api/history/${provider}/${id}`); toast("🗑 Gelöscht", "ok"); loadHistory(); } catch(e) { toast(e.message, "err"); }
+async function deleteOne(id) {
+  try { await api("DELETE", `/api/history/${id}`); toast("🗑 " + t("btn_delete"), "ok"); loadHistory(); } catch(e) { toast(e.message, "err"); }
 }
 async function bulkRetry() {
-  try { await api("POST", "/api/history/retry-bulk", { ids: Array.from(_selection) }); clearSelection(); toast("🔄 Gestartet", "ok"); loadHistory(); } catch(e) { toast(e.message, "err"); }
+  try { await api("POST", "/api/history/bulk/retry", { ids: Array.from(_selection) }); clearSelection(); toast("🔄 " + t("retry"), "ok"); loadHistory(); } catch(e) { toast(e.message, "err"); }
 }
 async function bulkDelete() {
   try { await api("DELETE", "/api/history/bulk", { ids: Array.from(_selection) }); clearSelection(); toast("🗑 Gelöscht", "ok"); loadHistory(); } catch(e) { toast(e.message, "err"); }
@@ -1211,7 +1212,7 @@ function openBrowser(context) {
   const frame = document.getElementById("browser-frame");
   document.getElementById("browser-modal-title").textContent = context === "recorder" ? t("recorder_title") : `Browser – ${context}`;
   document.getElementById("browser-modal-hint").textContent = context === "recorder" ? t("rec_step1_sub") : t("login_sub");
-  const noVncUrl = `http://${window.location.hostname}:6080/vnc.html?autoconnect=1&resize=scale`;
+  const noVncUrl = `http://${window.location.hostname}:6080/`;
   frame.src = noVncUrl;
   modal.classList.add("open");
   _browserModal = context;
@@ -1287,7 +1288,7 @@ async function submitOtp() {
   const code = document.getElementById("otp-input").value.trim();
   if (!code) return;
   try {
-    await api("POST", "/api/amazon/otp", { code });
+    await api("POST", "/api/otp", { code });
     document.getElementById("otp-modal").classList.remove("open");
     document.getElementById("otp-input").value = "";
     toast("✓ Code eingegeben", "ok");
@@ -1298,13 +1299,14 @@ document.getElementById("otp-input").addEventListener("keydown", e => { if (e.ke
 
 async function pollOtp() {
   try {
-    const { waiting } = await api("GET", "/api/amazon/otp-status");
-    document.getElementById("otp-modal").classList.toggle("open", !!waiting);
+    const { needed, login_required } = await api("GET", "/api/otp/status");
+    document.getElementById("otp-modal").classList.toggle("open", !!needed);
+    if (login_required) document.getElementById("login-modal").classList.add("open");
   } catch { /* ignore */ }
 }
 
 async function resetAndRelogin() {
-  try { await api("POST", "/api/amazon/reset-cookies"); document.getElementById("login-modal").classList.remove("open"); toast("✓ Session zurückgesetzt", "ok"); } catch(e) { toast(e.message, "err"); }
+  try { await api("POST", "/api/amazon/reset-session"); document.getElementById("login-modal").classList.remove("open"); toast("✓ Session zurückgesetzt", "ok"); } catch(e) { toast(e.message, "err"); }
 }
 
 function dismissLoginModal() { document.getElementById("login-modal").classList.remove("open"); }
@@ -1316,7 +1318,8 @@ async function ikeaImportCookies() {
     const r = await api("POST", "/api/ikea/import-cookies", { cookies: raw });
     toast(`✅ ${r.count} IKEA Cookies importiert`, "ok");
     document.getElementById("cookie-import-ikea").value = "";
-    toggleSettings("ikea");  // Panel neu laden → Status aktualisieren
+    await toggleSettings("ikea");  // close
+    await toggleSettings("ikea");  // reopen with fresh cookie status
   } catch(e) { toast(e.message, "err"); }
 }
 

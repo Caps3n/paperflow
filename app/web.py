@@ -205,16 +205,16 @@ async def trigger_run(body: RunRequest = RunRequest()):
 ENV_FIELDS = [
     {
         "key": "UI_USER",
-        "label": "Benutzername",
+        "label": "Username",
         "type": "text",
-        "group": "Sicherheit",
+        "group": "Security",
         "placeholder": "admin",
     },
     {
         "key": "UI_PASSWORD",
-        "label": "Passwort (leer = kein Login erforderlich)",
+        "label": "Password (empty = no auth required)",
         "type": "password",
-        "group": "Sicherheit",
+        "group": "Security",
     },
     {
         "key": "PAPERLESS_URL",
@@ -230,15 +230,15 @@ ENV_FIELDS = [
     },
     {
         "key": "RUN_INTERVAL_HOURS",
-        "label": "Intervall (Stunden)",
+        "label": "Interval (hours)",
         "type": "number",
-        "group": "Allgemein",
+        "group": "General",
     },
     {
         "key": "RUN_ON_STARTUP",
-        "label": "Beim Start ausführen",
+        "label": "Run on startup",
         "type": "select",
-        "group": "Allgemein",
+        "group": "General",
         "options": ["true", "false"],
     },
     {
@@ -246,21 +246,21 @@ ENV_FIELDS = [
         "label": "Chrome CDP URL",
         "type": "text",
         "group": "Browser",
-        "placeholder": "http://chrome-desktop:9222",
+        "placeholder": "http://paperflow-chrome:9222",
     },
     {
         "key": "UPLOAD_WORKERS",
-        "label": "Parallele Upload-Threads",
+        "label": "Parallel upload threads",
         "type": "number",
-        "group": "Allgemein",
+        "group": "General",
     },
 ]
 
 # Provider-spezifische Einstellungen (werden ebenfalls in .env gespeichert)
 PROVIDER_ENV_FIELDS: dict[str, list[dict]] = {
     "amazon": [
-        {"key": "AMAZON_EMAIL", "label": "E-Mail", "type": "email"},
-        {"key": "AMAZON_PASSWORD", "label": "Passwort", "type": "password"},
+        {"key": "AMAZON_EMAIL", "label": "Email", "type": "email"},
+        {"key": "AMAZON_PASSWORD", "label": "Password", "type": "password"},
         {
             "key": "AMAZON_DOMAIN",
             "label": "Domain",
@@ -269,26 +269,17 @@ PROVIDER_ENV_FIELDS: dict[str, list[dict]] = {
         },
         {
             "key": "AMAZON_START_YEAR",
-            "label": "Startjahr (z.B. 2015)",
+            "label": "Start year (e.g. 2015)",
             "type": "number",
         },
-        {"key": "AMAZON_OTP_CODE", "label": "2FA OTP (einmalig)", "type": "text"},
+        {"key": "AMAZON_OTP_CODE", "label": "2FA OTP (one-time)", "type": "text"},
     ],
     "ikea": [
-        {"key": "IKEA_EMAIL", "label": "IKEA E-Mail", "type": "email"},
-        {"key": "IKEA_PASSWORD", "label": "IKEA Passwort", "type": "password"},
+        {"key": "IKEA_EMAIL", "label": "IKEA Email", "type": "email"},
+        {"key": "IKEA_PASSWORD", "label": "IKEA Password", "type": "password"},
         {
             "key": "IKEA_MONTHS_BACK",
-            "label": "Monate rückwirkend (z.B. 12)",
-            "type": "number",
-        },
-    ],
-    "paypal": [
-        {"key": "PAYPAL_EMAIL", "label": "PayPal E-Mail", "type": "email"},
-        {"key": "PAYPAL_PASSWORD", "label": "PayPal Passwort", "type": "password"},
-        {
-            "key": "PAYPAL_MONTHS_BACK",
-            "label": "Monate rückwirkend (z.B. 24)",
+            "label": "Months back (e.g. 12)",
             "type": "number",
         },
     ],
@@ -785,6 +776,24 @@ async def submit_otp(body: OtpSubmit):
         raise HTTPException(400, "Kein OTP angefordert")
     otp_state.submit_otp(body.code)
     return {"ok": True}
+
+
+# ── UI compatibility aliases ──────────────────────────────────────────────────
+
+
+@app.post("/api/amazon/otp")
+async def submit_amazon_otp(body: OtpSubmit):
+    return await submit_otp(body)
+
+
+@app.get("/api/amazon/otp-status")
+async def amazon_otp_status():
+    return await get_otp_status()
+
+
+@app.post("/api/amazon/reset-cookies")
+async def reset_amazon_cookies():
+    return await reset_amazon_session()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
