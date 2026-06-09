@@ -9,10 +9,16 @@ providers:
     # Paperless-Correspondent
     correspondent: "Amazon"
 
-  paypal:
+  # PayPal deaktiviert – Login durch Passkey-Dialog blockiert
+  # paypal:
+  #   enabled: false
+  #   tags: ["PayPal", "Kontoauszug"]
+  #   correspondent: "PayPal"
+
+  ikea:
     enabled: false
-    tags: ["PayPal", "Kontoauszug"]
-    correspondent: "PayPal"
+    tags: ["IKEA", "Rechnung"]
+    correspondent: "IKEA"
 
   # Weitere Provider können hier hinzugefügt werden:
   # ebay:
