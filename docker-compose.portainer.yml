@@ -27,18 +27,21 @@ services:
   #   CDP:    intern auf port 9222 (paperflow verbindet sich)
   # ─────────────────────────────────────────────────────────────────
   paperflow-chrome:
-    build:
-      context: ./chrome-desktop
-      dockerfile: Dockerfile
+    image: lscr.io/linuxserver/chromium:latest
     container_name: paperflow-chrome
     restart: unless-stopped
     ports:
-      - "6080:6080"       # noVNC Web-UI
+      - "6080:3000"       # noVNC Web-UI
     volumes:
-      - chrome_data:/chrome-data    # Chrome-Profil + Cookies persistent
+      - chrome_data:/config    # Chrome-Profil + Cookies persistent
     shm_size: "1gb"
     networks:
       - paperflow
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Berlin
+      - CHROME_CLI=--remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --no-sandbox
 
   # ─────────────────────────────────────────────────────────────────
   # paperflow – Invoice Fetcher + Web-UI
