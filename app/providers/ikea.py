@@ -28,6 +28,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import requests as _requests
 from playwright.sync_api import Page, sync_playwright
 
 from app import database
@@ -295,6 +296,26 @@ class IkeaProvider(BaseProvider):
                         dl_btn.click()
                     download = dl_info.value
                     download.save_as(str(out_path))
+
+                    # CDP-Modus: Browser läuft in separatem Container →
+                    # save_as() kann leer sein. Fallback: direkt via requests + Cookies.
+                    if not out_path.exists() or out_path.stat().st_size == 0:
+                        logger.info("Datei leer – versuche Direkt-Download: %s", download.url)
+                        try:
+                            cookies = {c["name"]: c["value"] for c in page.context.cookies()}
+                            resp = _requests.get(download.url, cookies=cookies, timeout=30,
+                                                 headers={"User-Agent": "Mozilla/5.0"})
+                            if resp.ok and len(resp.content) > 100:
+                                out_path.write_bytes(resp.content)
+                                logger.info("Direkt-Download OK: %d bytes", len(resp.content))
+                            else:
+                                logger.warning("Direkt-Download leer/fehlgeschlagen: %s %d",
+                                               resp.status_code, len(resp.content))
+                                return None
+                        except Exception as de:
+                            logger.warning("Direkt-Download Fehler: %s", de)
+                            return None
+
                     logger.info("Kassenbon gespeichert: %s", out_path.name)
                     return out_path
             except Exception as e:

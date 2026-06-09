@@ -29,7 +29,7 @@ class PaperlessClient:
     def test_connection(self) -> bool:
         """Prüft ob Paperless-NGX erreichbar ist."""
         try:
-            r = self.session.get(self._url("documents/"), timeout=10)
+            r = self.session.get(self._url("documents/"), timeout=30)
             r.raise_for_status()
             logger.info("Paperless-NGX Verbindung OK: %s", self.base_url)
             return True
@@ -102,7 +102,7 @@ class PaperlessClient:
     def _get_or_create_tag(self, name: str) -> int | None:
         """Gibt existierenden Tag zurück oder erstellt einen neuen."""
         try:
-            r = self.session.get(self._url("tags/"), params={"name": name}, timeout=10)
+            r = self.session.get(self._url("tags/"), params={"name": name}, timeout=30)
             r.raise_for_status()
             results = r.json().get("results", [])
             if results:
@@ -111,7 +111,7 @@ class PaperlessClient:
             r = self.session.post(
                 self._url("tags/"),
                 json={"name": name},
-                timeout=10,
+                timeout=30,
             )
             r.raise_for_status()
             return r.json()["id"]
@@ -123,7 +123,7 @@ class PaperlessClient:
         """Gibt existierenden Korrespondenten zurück oder erstellt einen neuen."""
         try:
             r = self.session.get(
-                self._url("correspondents/"), params={"name": name}, timeout=10
+                self._url("correspondents/"), params={"name": name}, timeout=30
             )
             r.raise_for_status()
             results = r.json().get("results", [])
@@ -135,7 +135,7 @@ class PaperlessClient:
             r = self.session.post(
                 self._url("correspondents/"),
                 json={"name": name},
-                timeout=10,
+                timeout=30,
             )
             r.raise_for_status()
             return r.json()["id"]
@@ -149,7 +149,7 @@ class PaperlessClient:
             results = []
             url = self._url("correspondents/")
             while url:
-                r = self.session.get(url, params={"page_size": 100}, timeout=10)
+                r = self.session.get(url, params={"page_size": 100}, timeout=30)
                 r.raise_for_status()
                 data = r.json()
                 results.extend(data.get("results", []))
@@ -170,7 +170,7 @@ class PaperlessClient:
             r = self.session.get(
                 self._url("documents/"),
                 params={"query": stem, "page_size": 25},
-                timeout=10,
+                timeout=30,
             )
             r.raise_for_status()
             results = r.json().get("results", [])
@@ -191,7 +191,7 @@ class PaperlessClient:
             results = []
             url = self._url("tags/")
             while url:
-                r = self.session.get(url, params={"page_size": 100}, timeout=10)
+                r = self.session.get(url, params={"page_size": 100}, timeout=30)
                 r.raise_for_status()
                 data = r.json()
                 results.extend(data.get("results", []))
