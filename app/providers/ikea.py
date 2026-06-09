@@ -1,15 +1,23 @@
 """
 IKEA Provider – lädt Kassenbons von IKEA herunter.
 
-Gelernter Flow (direkt auf ikea.com/de/de beobachtet):
+Zwei Modi (wie Amazon):
+  CDP-Modus (bevorzugt):
+    Verbindet sich mit dem chrome-desktop Container via CDP.
+    Nutzer loggt sich einmalig manuell ein (inkl. 2FA) → Session bleibt erhalten.
+    Setzt CHROME_CDP_URL=http://chrome-desktop:9222 voraus.
+
+  Fallback-Modus:
+    Startet eigenen Chromium-Browser mit Xvfb + automatischem Login.
+
+Gelernter Flow:
   1. Login → https://www.ikea.com/de/de/profile/login/
+     → Redirect zu de.accounts.ikea.com/login?state=... (SSO/OAuth)
      → Bei Erfolg: Redirect zu /de/de/loyalty-hub/
   2. Bestellliste: https://www.ikea.com/de/de/purchases/
      → <a href="/de/de/purchases/{ORDER_ID}/"> mit Datum, Betrag, Typ im Text
   3. Bestelldetail: /de/de/purchases/{ORDER_ID}/
-     → Rechts: "Aktionen" Panel mit "Kassenbon & Rechnung" Button
-  4. Klick "Kassenbon & Rechnung" → Side-Panel öffnet sich
-  5. Klick "Kassenbon herunterladen" → PDF-Download via page.expect_download()
+     → "Kassenbon & Rechnung" Button → Side-Panel → "Kassenbon herunterladen"
 """
 
 from __future__ import annotations
@@ -20,6 +28,7 @@ import os
 import random
 import re
 import time
+import urllib.request
 from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright
@@ -33,7 +42,10 @@ COOKIES_FILE = Path("/app/data/ikea_cookies.json")
 LOGIN_URL = "https://www.ikea.com/de/de/profile/login/"
 PURCHASES_URL = "https://www.ikea.com/de/de/purchases/"
 
-# Xvfb – virtuelles Display
+# CDP-Modus – gleiche Einstellung wie Amazon
+_CDP_URL = os.environ.get("CHROME_CDP_URL", "").strip()
+
+# Xvfb für Fallback-Modus
 try:
     from pyvirtualdisplay import Display as _XvfbDisplay
 
@@ -46,6 +58,11 @@ def _sleep(min_s: float = 1.0, max_s: float = 2.5) -> None:
     time.sleep(random.uniform(min_s, max_s))
 
 
+def _is_logged_in_url(url: str) -> bool:
+    """Prüft ob URL auf eingeloggten Zustand hindeutet."""
+    return "accounts.ikea.com" not in url and "/profile/login" not in url
+
+
 class IkeaProvider(BaseProvider):
     provider_name = "ikea"
 
@@ -55,9 +72,86 @@ class IkeaProvider(BaseProvider):
         self.password = os.environ.get("IKEA_PASSWORD", "")
         self.months_back = int(os.environ.get("IKEA_MONTHS_BACK") or "12")
 
-    # ── Browser ────────────────────────────────────────────────────
+    # ── Haupt-Dispatch ─────────────────────────────────────────────
 
-    def _launch(self) -> tuple:
+    def fetch_invoices(self) -> list[Invoice]:
+        if _CDP_URL:
+            return self._fetch_via_cdp()
+        return self._fetch_local()
+
+    # ── CDP-Modus ──────────────────────────────────────────────────
+
+    def _fetch_via_cdp(self) -> list[Invoice]:
+        """
+        CDP-Modus: Nutzt den persistenten chrome-desktop Browser.
+        Der Nutzer loggt sich einmalig manuell ein (inkl. 2FA).
+        Session wird automatisch wiederverwendet.
+        """
+        invoices: list[Invoice] = []
+        logger.info("CDP-Modus: Verbinde mit Chrome auf %s", _CDP_URL)
+
+        # Warten bis Chrome bereit
+        for attempt in range(30):
+            try:
+                urllib.request.urlopen(f"{_CDP_URL}/json/version", timeout=2)
+                break
+            except Exception:
+                if attempt == 0:
+                    logger.info("Warte auf Chrome CDP (%s)...", _CDP_URL)
+                time.sleep(2)
+        else:
+            logger.error("Chrome CDP nicht erreichbar nach 60s: %s", _CDP_URL)
+            return []
+
+        with sync_playwright() as p:
+            try:
+                browser = p.chromium.connect_over_cdp(_CDP_URL)
+                logger.info(
+                    "Chrome CDP verbunden: %d Context(s)", len(browser.contexts)
+                )
+            except Exception as e:
+                logger.error("CDP-Verbindung fehlgeschlagen: %s", e)
+                return []
+
+            context = (
+                browser.contexts[0]
+                if browser.contexts
+                else browser.new_context(
+                    locale="de-DE", viewport={"width": 1280, "height": 900}
+                )
+            )
+            page = context.new_page()
+
+            try:
+                # Login-Check
+                page.goto(LOGIN_URL, timeout=30_000)
+                page.wait_for_load_state("networkidle", timeout=20_000)
+                _sleep(1, 2)
+
+                if not _is_logged_in_url(page.url):
+                    logger.error(
+                        "IKEA: Nicht eingeloggt.\n"
+                        "→ Öffne http://<server>:6080/vnc.html\n"
+                        "→ Navigiere zu ikea.com/de/de und logge dich manuell ein (inkl. 2FA)\n"
+                        "→ Danach erneut starten"
+                    )
+                    return []
+
+                logger.info("IKEA: Eingeloggt – starte Bestellscan")
+                invoices = self._collect_invoices(page)
+
+            except Exception:
+                logger.exception("IKEA CDP-Fehler")
+            finally:
+                page.close()
+                # Browser NICHT schließen – Session bleibt erhalten
+
+        return invoices
+
+    # ── Fallback-Modus ─────────────────────────────────────────────
+
+    def _fetch_local(self) -> list[Invoice]:
+        """Fallback: eigener Chromium-Browser mit Xvfb + automatischem Login."""
         display = None
         if _HAS_XVFB:
             display = _XvfbDisplay(visible=False, size=(1280, 900))
@@ -87,7 +181,85 @@ class IkeaProvider(BaseProvider):
         context.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
         )
-        return display, pw, browser, context
+        invoices: list[Invoice] = []
+
+        try:
+            page = context.new_page()
+            self._load_cookies(context)
+
+            if not self._is_logged_in(page):
+                if not self._login(page):
+                    logger.error("IKEA Login fehlgeschlagen – Abbruch")
+                    return []
+
+            invoices = self._collect_invoices(page)
+            self._save_cookies(context)
+
+        except Exception:
+            logger.exception("IKEA Provider Fehler")
+        finally:
+            try:
+                browser.close()
+            except Exception:
+                pass
+            try:
+                pw.stop()
+            except Exception:
+                pass
+            if display:
+                try:
+                    display.stop()
+                except Exception:
+                    pass
+
+        logger.info("IKEA: %d Rechnungen gefunden", len(invoices))
+        return invoices
+
+    # ── Gemeinsame Scan-Logik ──────────────────────────────────────
+
+    def _collect_invoices(self, page: Page) -> list[Invoice]:
+        """Bestellscan + Download – wird von CDP- und Fallback-Modus verwendet."""
+        years_filter: set[int] | None = None
+        yf = os.environ.get("PAPERFLOW_YEARS_FILTER", "").strip()
+        if yf:
+            years_filter = {int(y) for y in yf.split(",") if y.strip().isdigit()}
+
+        orders = self._parse_orders(page)
+        invoices: list[Invoice] = []
+
+        for order in orders:
+            if years_filter and order["year"] not in years_filter:
+                logger.info(
+                    "Überspringe %s (Jahr %d nicht im Filter)",
+                    order["id"],
+                    order["year"],
+                )
+                continue
+
+            invoice_id = f"ikea_{order['id']}"
+            if database.invoice_exists(invoice_id):
+                logger.info("Bereits verarbeitet: %s", invoice_id)
+                continue
+
+            pdf_path = self._download_receipt(page, order)
+            if pdf_path and pdf_path.exists():
+                date_str = f"{order['year']}-{order['month']:02d}-{order['day']:02d}"
+                invoices.append(
+                    Invoice(
+                        invoice_id=invoice_id,
+                        file_path=pdf_path,
+                        title=f"IKEA Kassenbon {date_str}",
+                        date=date_str,
+                        extra_tags=[str(order["year"])],
+                    )
+                )
+            else:
+                logger.warning("Kein PDF für %s", order["id"])
+
+        logger.info("IKEA: %d Rechnungen gefunden", len(invoices))
+        return invoices
+
+    # ── Cookie-Verwaltung ──────────────────────────────────────────
 
     def _save_cookies(self, context: BrowserContext) -> None:
         cookies = context.cookies()
@@ -107,16 +279,14 @@ class IkeaProvider(BaseProvider):
             logger.warning("Cookies nicht ladbar: %s", e)
             return False
 
-    # ── Login ──────────────────────────────────────────────────────
+    # ── Login (nur Fallback-Modus) ─────────────────────────────────
 
     def _is_logged_in(self, page: Page) -> bool:
         try:
             page.goto(LOGIN_URL, timeout=30_000)
             page.wait_for_load_state("networkidle", timeout=20_000)
             url = page.url
-            # Eingeloggt = zu loyalty-hub oder purchases umgeleitet
-            # Nicht eingeloggt = auf accounts.ikea.com (SSO/OAuth) oder profile/login gelandet
-            logged_in = "accounts.ikea.com" not in url and "/profile/login" not in url
+            logged_in = _is_logged_in_url(url)
             logger.info("Login-Check: %s → %s", url[:70], "✓" if logged_in else "✗")
             return logged_in
         except Exception as e:
@@ -150,12 +320,12 @@ class IkeaProvider(BaseProvider):
         _sleep(2, 3)
         self._dismiss_overlays(page)
 
-        # Bereits eingeloggt? (nicht auf accounts.ikea.com = SSO-Login-Seite, nicht auf /profile/login)
-        if "accounts.ikea.com" not in page.url and "/profile/login" not in page.url:
+        # Bereits eingeloggt?
+        if _is_logged_in_url(page.url):
             logger.info("Bereits eingeloggt (Redirect erkannt)")
             return True
 
-        # E-Mail Feld
+        # E-Mail Feld suchen
         email_field = None
         for sel in [
             "#username",
@@ -181,7 +351,7 @@ class IkeaProvider(BaseProvider):
         email_field.fill(self.email)
         _sleep(0.5, 1)
 
-        # Weiter-Button – Navigation darf eine Exception werfen (SPA-Reload)
+        # Weiter-Button – Navigation darf Exception werfen (SPA-Reload)
         clicked = False
         for sel in [
             "button[type='submit']",
@@ -201,7 +371,6 @@ class IkeaProvider(BaseProvider):
             except Exception:
                 continue
         if not clicked:
-            # Letzter Versuch: frische Element-Abfrage statt stale Handle
             try:
                 page.press(
                     "input[type='email'], #username, input[name='username']", "Enter"
@@ -243,19 +412,23 @@ class IkeaProvider(BaseProvider):
             try:
                 btn = page.query_selector(sel)
                 if btn and btn.is_visible():
-                    btn.click()
+                    try:
+                        btn.click()
+                    except Exception:
+                        pass
                     break
             except Exception:
                 continue
         else:
-            pwd_field.press("Enter")
+            try:
+                pwd_field.press("Enter")
+            except Exception:
+                pass
 
         page.wait_for_load_state("networkidle", timeout=30_000)
         _sleep(2, 3)
 
-        logged_in = (
-            "accounts.ikea.com" not in page.url and "/profile/login" not in page.url
-        )
+        logged_in = _is_logged_in_url(page.url)
         if logged_in:
             self._save_cookies(context=page.context)
         logger.info(
@@ -276,8 +449,6 @@ class IkeaProvider(BaseProvider):
         orders = []
         seen: set[str] = set()
 
-        # Links zu Bestelldetails: <a href="/de/de/purchases/{ID}/">
-        # Text-Inhalt: "30.05.2026\n\n168,34 €\n\nCash & Carry"
         links = page.query_selector_all("a[href*='/purchases/']")
         for link in links:
             href = link.get_attribute("href") or ""
@@ -325,7 +496,6 @@ class IkeaProvider(BaseProvider):
         page.wait_for_load_state("networkidle", timeout=20_000)
         _sleep(2, 3)
 
-        # "Kassenbon & Rechnung" Button im Aktionen-Panel klicken
         receipt_btn = None
         for sel in [
             "button:has-text('Kassenbon & Rechnung')",
@@ -346,7 +516,6 @@ class IkeaProvider(BaseProvider):
         receipt_btn.click()
         _sleep(1, 2)
 
-        # "Kassenbon herunterladen" im Side-Panel
         for sel in [
             "button:has-text('Kassenbon herunterladen')",
             "button:has-text('herunterladen')",
@@ -369,79 +538,3 @@ class IkeaProvider(BaseProvider):
             "'Kassenbon herunterladen' Button nicht gefunden für %s", order["id"]
         )
         return None
-
-    # ── Hauptmethode ───────────────────────────────────────────────
-
-    def fetch_invoices(self) -> list[Invoice]:
-        display, pw, browser, context = self._launch()
-        invoices: list[Invoice] = []
-
-        try:
-            page = context.new_page()
-            self._load_cookies(context)
-
-            if not self._is_logged_in(page):
-                if not self._login(page):
-                    logger.error("IKEA Login fehlgeschlagen – abbruch")
-                    return []
-
-            # Jahr-Filter
-            years_filter: set[int] | None = None
-            yf = os.environ.get("PAPERFLOW_YEARS_FILTER", "").strip()
-            if yf:
-                years_filter = {int(y) for y in yf.split(",") if y.strip().isdigit()}
-
-            orders = self._parse_orders(page)
-
-            for order in orders:
-                if years_filter and order["year"] not in years_filter:
-                    logger.info(
-                        "Überspringe %s (Jahr %d nicht im Filter)",
-                        order["id"],
-                        order["year"],
-                    )
-                    continue
-
-                invoice_id = f"ikea_{order['id']}"
-                if database.invoice_exists(invoice_id):
-                    logger.info("Bereits verarbeitet: %s", invoice_id)
-                    continue
-
-                pdf_path = self._download_receipt(page, order)
-                if pdf_path and pdf_path.exists():
-                    date_str = (
-                        f"{order['year']}-{order['month']:02d}-{order['day']:02d}"
-                    )
-                    invoices.append(
-                        Invoice(
-                            invoice_id=invoice_id,
-                            file_path=pdf_path,
-                            title=f"IKEA Kassenbon {date_str}",
-                            date=date_str,
-                            extra_tags=[str(order["year"])],
-                        )
-                    )
-                else:
-                    logger.warning("Kein PDF für %s", order["id"])
-
-            self._save_cookies(context)
-
-        except Exception:
-            logger.exception("IKEA Provider Fehler")
-        finally:
-            try:
-                browser.close()
-            except Exception:
-                pass
-            try:
-                pw.stop()
-            except Exception:
-                pass
-            if display:
-                try:
-                    display.stop()
-                except Exception:
-                    pass
-
-        logger.info("IKEA: %d Rechnungen gefunden", len(invoices))
-        return invoices

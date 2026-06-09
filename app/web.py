@@ -563,6 +563,106 @@ async def reset_amazon_session():
     return {"ok": True}
 
 
+# ── IKEA ──────────────────────────────────────────────────────────────────────
+
+IKEA_COOKIES_FILE = Path("/app/data/ikea_cookies.json")
+_IKEA_LOGIN_URL = "https://www.ikea.com/de/de/profile/login/"
+_CDP_URL = os.environ.get("CHROME_CDP_URL", "").strip()
+
+
+@app.post("/api/ikea/open-login")
+async def ikea_open_login():
+    """Öffnet die IKEA Login-Seite im CDP-Browser (noVNC).
+    Der Nutzer kann sich dort manuell einloggen (inkl. 2FA)."""
+    if not _CDP_URL:
+        raise HTTPException(400, "CHROME_CDP_URL nicht gesetzt – CDP-Modus inaktiv")
+    try:
+        import urllib.request as _ur
+
+        _ur.urlopen(f"{_CDP_URL}/json/version", timeout=3)
+    except Exception:
+        raise HTTPException(503, "Chrome CDP nicht erreichbar")
+
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(_CDP_URL)
+            ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+            page = ctx.new_page()
+            page.goto(_IKEA_LOGIN_URL, timeout=20_000)
+            # Seite offen lassen – Nutzer loggt sich manuell ein
+        return {
+            "ok": True,
+            "message": "IKEA Login-Seite geöffnet – bitte im Browser einloggen",
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Fehler beim Öffnen: {e}")
+
+
+@app.post("/api/ikea/import-cookies")
+async def import_ikea_cookies(body: "CookieImport"):
+    """Importiert IKEA-Cookies aus Cookie Editor Extension (kein VNC nötig).
+    Nutzer loggt sich in eigenem Browser ein → Cookie Editor → Export as JSON → hier einfügen."""
+    import json as _j
+
+    try:
+        raw = _j.loads(body.cookies)
+    except Exception:
+        raise HTTPException(400, "Ungültiges JSON")
+
+    def _normalize(c: dict) -> dict:
+        out: dict = {
+            "name": c.get("name", ""),
+            "value": c.get("value", ""),
+            "domain": c.get("domain", ""),
+            "path": c.get("path", "/"),
+            "secure": bool(c.get("secure", False)),
+            "httpOnly": bool(c.get("httpOnly", False)),
+        }
+        if "sameSite" in c and c["sameSite"] in ("Strict", "Lax", "None"):
+            out["sameSite"] = c["sameSite"]
+        if "expirationDate" in c:
+            out["expires"] = int(c["expirationDate"])
+        elif "expires" in c:
+            out["expires"] = int(c["expires"])
+        return out
+
+    if not isinstance(raw, list):
+        raise HTTPException(400, "Cookies müssen eine Liste sein")
+
+    cookies = [_normalize(c) for c in raw if isinstance(c, dict)]
+    if not cookies:
+        raise HTTPException(400, "Keine Cookies gefunden")
+
+    IKEA_COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    IKEA_COOKIES_FILE.write_text(_j.dumps(cookies))
+    logger.info("IKEA Cookies importiert: %d Cookies", len(cookies))
+    return {"ok": True, "count": len(cookies)}
+
+
+@app.post("/api/ikea/reset-session")
+async def ikea_reset_session():
+    """Löscht gespeicherte IKEA-Cookies."""
+    if IKEA_COOKIES_FILE.exists():
+        IKEA_COOKIES_FILE.unlink()
+    return {"ok": True}
+
+
+@app.get("/api/ikea/cookies-status")
+async def ikea_cookies_status():
+    """Zeigt ob IKEA-Cookies vorhanden sind."""
+    if not IKEA_COOKIES_FILE.exists():
+        return {"has_cookies": False}
+    try:
+        import json as _j
+
+        cookies = _j.loads(IKEA_COOKIES_FILE.read_text())
+        return {"has_cookies": True, "count": len(cookies)}
+    except Exception:
+        return {"has_cookies": False}
+
+
 COOKIES_FILE = Path("/app/data/amazon_cookies.json")
 
 
