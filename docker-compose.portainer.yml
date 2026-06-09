@@ -27,7 +27,9 @@ services:
   #   CDP:    intern auf port 9222 (paperflow verbindet sich)
   # ─────────────────────────────────────────────────────────────────
   paperflow-chrome:
-    image: ghcr.io/caps3n/paperflow-chrome:latest
+    build:
+      context: ./chrome-desktop
+      dockerfile: Dockerfile
     container_name: paperflow-chrome
     restart: unless-stopped
     ports:
