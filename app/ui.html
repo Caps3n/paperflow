@@ -170,13 +170,6 @@
   .code-block { background: #0a0c14; border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; font-family: monospace; font-size: 12px; line-height: 1.7; color: #a5b4fc; overflow-x: auto; white-space: pre; margin-top: 12px; }
   .code-editor { background: #0a0c14; border: 1px solid var(--border); border-radius: 8px; padding: 16px; font-family: monospace; font-size: 12px; line-height: 1.7; color: #a5b4fc; width: 100%; min-height: 200px; resize: vertical; }
 
-  /* Browser Modal */
-  #browser-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:200; flex-direction:column; }
-  #browser-modal.open { display:flex; }
-  .browser-modal-bar { display:flex; align-items:center; gap:12px; padding:12px 16px; background:var(--surface); border-bottom:1px solid var(--border); flex-shrink:0; }
-  .browser-modal-bar .title { flex:1; font-weight:700; font-size:14px; }
-  .browser-modal-bar .hint { color:var(--muted); font-size:12px; }
-  #browser-frame { flex:1; width:100%; border:none; background:#000; }
 
   /* Recorder */
   .recorder-card { background:linear-gradient(135deg,rgba(79,142,247,.08),rgba(110,231,183,.05)); border:1px solid var(--accent); border-radius:var(--radius); padding:20px; margin-top:16px; }
@@ -516,17 +509,6 @@ class MeinproviderProvider(BaseProvider):
   </div>
 </div>
 
-<!-- Browser Modal (noVNC) -->
-<div id="browser-modal">
-  <div class="browser-modal-bar">
-    <span style="font-size:18px">🌐</span>
-    <div class="title" id="browser-modal-title">Browser</div>
-    <span class="hint" id="browser-modal-hint"></span>
-    <div class="spacer"></div>
-    <button class="btn btn-ghost btn-sm" onclick="closeBrowser()">✕ <span data-i18n="btn_close">Schließen</span></button>
-  </div>
-  <iframe id="browser-frame" allow="fullscreen" title="Browser Desktop"></iframe>
-</div>
 
 <!-- OTP Modal -->
 <div class="dialog-overlay" id="otp-modal">
@@ -1208,19 +1190,11 @@ document.getElementById("auto-refresh-toggle").addEventListener("change", e => {
 let _browserModal = null;
 
 function openBrowser(context) {
-  const modal = document.getElementById("browser-modal");
-  const frame = document.getElementById("browser-frame");
-  document.getElementById("browser-modal-title").textContent = context === "recorder" ? t("recorder_title") : `Browser – ${context}`;
-  document.getElementById("browser-modal-hint").textContent = context === "recorder" ? t("rec_step1_sub") : t("login_sub");
-  const noVncUrl = `http://${window.location.hostname}:6080/`;
-  frame.src = noVncUrl;
-  modal.classList.add("open");
-  _browserModal = context;
+  const noVncUrl = `https://${window.location.hostname}:6443/`;
+  window.open(noVncUrl, "_blank", "noopener,noreferrer");
 }
 
 function closeBrowser() {
-  document.getElementById("browser-modal").classList.remove("open");
-  document.getElementById("browser-frame").src = "about:blank";
   _browserModal = null;
 }
 
