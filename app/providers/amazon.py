@@ -4,9 +4,9 @@ Amazon Provider – lädt Rechnungen von Amazon.de / Amazon.com herunter.
 Zwei Modi:
   CDP-Modus (bevorzugt):
     Verbindet sich mit einem echten Chrome-Browser via Remote-Debugging (CDP).
-    Der Browser läuft im chrome-desktop Container und ist über noVNC zugänglich.
+    Der Browser läuft im paperflow-chrome Container und ist über noVNC zugänglich.
     Der Nutzer loggt sich einmalig manuell ein → Session bleibt dauerhaft erhalten.
-    Setzt CHROME_CDP_URL=http://chrome-desktop:9222 in der Umgebung voraus.
+    Setzt CHROME_CDP_URL=http://paperflow-chrome:9222 in der Umgebung voraus.
 
   Fallback-Modus:
     Startet einen eigenen Chromium-Browser (headless oder mit Xvfb).

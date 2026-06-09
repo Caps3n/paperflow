@@ -54,6 +54,30 @@ for _src, _dst in [(_ENV_LEGACY, ENV_PATH), (_CONFIG_LEGACY, CONFIG_PATH)]:
 app = FastAPI(title="Invoice Fetcher", docs_url=None, redoc_url=None)
 
 
+# ── CDP URL Helper ────────────────────────────────────────────────────────────
+
+def _get_cdp_url() -> str:
+    """Always reads CHROME_CDP_URL fresh (user may update it via web UI)."""
+    return os.environ.get("CHROME_CDP_URL", "").strip()
+
+
+def _resolve_cdp_url(cdp_url: str) -> str:
+    """Resolve hostname → IP so Chrome's Host-header DNS-rebinding check passes."""
+    import socket
+    import urllib.parse
+    try:
+        parsed = urllib.parse.urlparse(cdp_url)
+        hostname = parsed.hostname or ""
+        if hostname and not hostname.replace(".", "").isdigit():
+            ip = socket.gethostbyname(hostname)
+            port = parsed.port
+            new_netloc = f"{ip}:{port}" if port else ip
+            return urllib.parse.urlunparse(parsed._replace(netloc=new_netloc))
+    except Exception:
+        pass
+    return cdp_url
+
+
 # ── Basic Auth Middleware ──────────────────────────────────────────────────────
 
 
@@ -275,8 +299,6 @@ PROVIDER_ENV_FIELDS: dict[str, list[dict]] = {
         {"key": "AMAZON_OTP_CODE", "label": "2FA OTP (one-time)", "type": "text"},
     ],
     "ikea": [
-        {"key": "IKEA_EMAIL", "label": "IKEA Email", "type": "email"},
-        {"key": "IKEA_PASSWORD", "label": "IKEA Password", "type": "password"},
         {
             "key": "IKEA_MONTHS_BACK",
             "label": "Months back (e.g. 12)",
@@ -556,21 +578,21 @@ async def reset_amazon_session():
 
 # ── IKEA ──────────────────────────────────────────────────────────────────────
 
-IKEA_COOKIES_FILE = Path("/app/data/ikea_cookies.json")
 _IKEA_LOGIN_URL = "https://www.ikea.com/de/de/profile/login/"
-_CDP_URL = os.environ.get("CHROME_CDP_URL", "").strip()
 
 
 @app.post("/api/ikea/open-login")
 async def ikea_open_login():
     """Öffnet die IKEA Login-Seite im CDP-Browser (noVNC).
     Der Nutzer kann sich dort manuell einloggen (inkl. 2FA)."""
-    if not _CDP_URL:
+    cdp_url = _get_cdp_url()
+    if not cdp_url:
         raise HTTPException(400, "CHROME_CDP_URL nicht gesetzt – CDP-Modus inaktiv")
+
+    resolved = _resolve_cdp_url(cdp_url)
     try:
         import urllib.request as _ur
-
-        _ur.urlopen(f"{_CDP_URL}/json/version", timeout=3)
+        _ur.urlopen(f"{resolved}/json/version", timeout=3)
     except Exception:
         raise HTTPException(503, "Chrome CDP nicht erreichbar")
 
@@ -578,7 +600,7 @@ async def ikea_open_login():
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(_CDP_URL)
+            browser = p.chromium.connect_over_cdp(resolved)
             ctx = browser.contexts[0] if browser.contexts else browser.new_context()
             page = ctx.new_page()
             page.goto(_IKEA_LOGIN_URL, timeout=20_000)
@@ -589,69 +611,6 @@ async def ikea_open_login():
         }
     except Exception as e:
         raise HTTPException(500, f"Fehler beim Öffnen: {e}")
-
-
-@app.post("/api/ikea/import-cookies")
-async def import_ikea_cookies(body: "CookieImport"):
-    """Importiert IKEA-Cookies aus Cookie Editor Extension (kein VNC nötig).
-    Nutzer loggt sich in eigenem Browser ein → Cookie Editor → Export as JSON → hier einfügen."""
-    import json as _j
-
-    try:
-        raw = _j.loads(body.cookies)
-    except Exception:
-        raise HTTPException(400, "Ungültiges JSON")
-
-    def _normalize(c: dict) -> dict:
-        out: dict = {
-            "name": c.get("name", ""),
-            "value": c.get("value", ""),
-            "domain": c.get("domain", ""),
-            "path": c.get("path", "/"),
-            "secure": bool(c.get("secure", False)),
-            "httpOnly": bool(c.get("httpOnly", False)),
-        }
-        if "sameSite" in c and c["sameSite"] in ("Strict", "Lax", "None"):
-            out["sameSite"] = c["sameSite"]
-        if "expirationDate" in c:
-            out["expires"] = int(c["expirationDate"])
-        elif "expires" in c:
-            out["expires"] = int(c["expires"])
-        return out
-
-    if not isinstance(raw, list):
-        raise HTTPException(400, "Cookies müssen eine Liste sein")
-
-    cookies = [_normalize(c) for c in raw if isinstance(c, dict)]
-    if not cookies:
-        raise HTTPException(400, "Keine Cookies gefunden")
-
-    IKEA_COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    IKEA_COOKIES_FILE.write_text(_j.dumps(cookies))
-    logger.info("IKEA Cookies importiert: %d Cookies", len(cookies))
-    return {"ok": True, "count": len(cookies)}
-
-
-@app.post("/api/ikea/reset-session")
-async def ikea_reset_session():
-    """Löscht gespeicherte IKEA-Cookies."""
-    if IKEA_COOKIES_FILE.exists():
-        IKEA_COOKIES_FILE.unlink()
-    return {"ok": True}
-
-
-@app.get("/api/ikea/cookies-status")
-async def ikea_cookies_status():
-    """Zeigt ob IKEA-Cookies vorhanden sind."""
-    if not IKEA_COOKIES_FILE.exists():
-        return {"has_cookies": False}
-    try:
-        import json as _j
-
-        cookies = _j.loads(IKEA_COOKIES_FILE.read_text())
-        return {"has_cookies": True, "count": len(cookies)}
-    except Exception:
-        return {"has_cookies": False}
 
 
 COOKIES_FILE = Path("/app/data/amazon_cookies.json")
@@ -872,14 +831,15 @@ async def get_logs(lines: int = 200):
 
 @app.get("/api/browser/status")
 async def browser_status():
-    """Prüft ob der chrome-desktop Container erreichbar ist."""
+    """Prüft ob der paperflow-chrome Container erreichbar ist."""
     import urllib.request as _urllib
 
-    cdp_url = os.environ.get("CHROME_CDP_URL", "").strip()
+    cdp_url = _get_cdp_url()
     if not cdp_url:
         return {"available": False, "reason": "CHROME_CDP_URL nicht gesetzt"}
+    resolved = _resolve_cdp_url(cdp_url)
     try:
-        _urllib.urlopen(f"{cdp_url}/json/version", timeout=2)
+        _urllib.urlopen(f"{resolved}/json/version", timeout=2)
         return {"available": True, "cdp_url": cdp_url}
     except Exception as e:
         return {"available": False, "reason": str(e)}
@@ -982,7 +942,7 @@ async def recorder_capture():
     """
     import concurrent.futures
 
-    cdp_url = os.environ.get("CHROME_CDP_URL", "").strip()
+    cdp_url = _get_cdp_url()
     if not cdp_url:
         raise HTTPException(
             400, "Kein Browser verbunden – CHROME_CDP_URL nicht gesetzt"
@@ -992,7 +952,7 @@ async def recorder_capture():
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(cdp_url)
+            browser = p.chromium.connect_over_cdp(_resolve_cdp_url(cdp_url))
             if not browser.contexts:
                 raise ValueError("Keine Browser-Contexts gefunden")
             ctx = browser.contexts[0]
