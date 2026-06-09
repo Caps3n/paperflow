@@ -177,7 +177,7 @@ class IkeaProvider(BaseProvider):
                 continue
 
             invoice_id = f"ikea_{order['id']}"
-            if database.invoice_exists(invoice_id):
+            if database.is_processed(self.provider_name, invoice_id):
                 logger.info("Bereits verarbeitet: %s", invoice_id)
                 continue
 
