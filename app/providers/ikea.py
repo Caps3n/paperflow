@@ -206,6 +206,7 @@ class IkeaProvider(BaseProvider):
 
     # Mögliche Selektoren für den "Mehr anzeigen"-Button auf IKEA
     _LOAD_MORE_SELECTORS = [
+        "button:has-text('Weitere Informationen')",  # IKEA DE: "10 von 47 Ergebnissen"
         "button:has-text('Mehr anzeigen')",
         "button:has-text('Weitere Bestellungen')",
         "button:has-text('Mehr laden')",
