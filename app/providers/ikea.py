@@ -181,7 +181,8 @@ class IkeaProvider(BaseProvider):
         email_field.fill(self.email)
         _sleep(0.5, 1)
 
-        # Weiter-Button
+        # Weiter-Button – Navigation darf eine Exception werfen (SPA-Reload)
+        clicked = False
         for sel in [
             "button[type='submit']",
             "button:has-text('Weiter')",
@@ -191,12 +192,22 @@ class IkeaProvider(BaseProvider):
             try:
                 btn = page.query_selector(sel)
                 if btn and btn.is_visible():
-                    btn.click()
+                    try:
+                        btn.click()
+                    except Exception:
+                        pass  # Navigation/Detach OK
+                    clicked = True
                     break
             except Exception:
                 continue
-        else:
-            email_field.press("Enter")
+        if not clicked:
+            # Letzter Versuch: frische Element-Abfrage statt stale Handle
+            try:
+                page.press(
+                    "input[type='email'], #username, input[name='username']", "Enter"
+                )
+            except Exception:
+                pass
 
         _sleep(2, 3)
 
