@@ -116,10 +116,7 @@ class IkeaProvider(BaseProvider):
             url = page.url
             # Eingeloggt = zu loyalty-hub oder purchases umgeleitet
             # Nicht eingeloggt = auf accounts.ikea.com (SSO/OAuth) oder profile/login gelandet
-            logged_in = (
-                "accounts.ikea.com" not in url
-                and "/profile/login" not in url
-            )
+            logged_in = "accounts.ikea.com" not in url and "/profile/login" not in url
             logger.info("Login-Check: %s → %s", url[:70], "✓" if logged_in else "✗")
             return logged_in
         except Exception as e:
@@ -246,8 +243,7 @@ class IkeaProvider(BaseProvider):
         _sleep(2, 3)
 
         logged_in = (
-            "accounts.ikea.com" not in page.url
-            and "/profile/login" not in page.url
+            "accounts.ikea.com" not in page.url and "/profile/login" not in page.url
         )
         if logged_in:
             self._save_cookies(context=page.context)
