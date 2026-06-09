@@ -1,14 +1,10 @@
 """
 IKEA Provider – lädt Kassenbons von IKEA herunter.
 
-Zwei Modi (wie Amazon):
-  CDP-Modus (bevorzugt):
-    Verbindet sich mit dem chrome-desktop Container via CDP.
-    Nutzer loggt sich einmalig manuell ein (inkl. 2FA) → Session bleibt erhalten.
-    Setzt CHROME_CDP_URL=http://chrome-desktop:9222 voraus.
-
-  Fallback-Modus:
-    Startet eigenen Chromium-Browser mit Xvfb + automatischem Login.
+CDP-Modus:
+  Verbindet sich mit dem paperflow-chrome Container via CDP.
+  Nutzer loggt sich einmalig manuell ein (inkl. 2FA) → Session bleibt erhalten.
+  Setzt CHROME_CDP_URL=http://paperflow-chrome:9222 voraus.
 
 Gelernter Flow:
   1. Login → https://www.ikea.com/de/de/profile/login/
@@ -22,36 +18,27 @@ Gelernter Flow:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import random
 import re
+import socket
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from playwright.sync_api import BrowserContext, Page, sync_playwright
+from playwright.sync_api import Page, sync_playwright
 
 from app import database
 from app.providers import BaseProvider, Invoice
 
 logger = logging.getLogger("provider.ikea")
 
-COOKIES_FILE = Path("/app/data/ikea_cookies.json")
 LOGIN_URL = "https://www.ikea.com/de/de/profile/login/"
 PURCHASES_URL = "https://www.ikea.com/de/de/purchases/"
 
-# CDP-Modus – gleiche Einstellung wie Amazon
 _CDP_URL = os.environ.get("CHROME_CDP_URL", "").strip()
-
-# Xvfb für Fallback-Modus
-try:
-    from pyvirtualdisplay import Display as _XvfbDisplay
-
-    _HAS_XVFB = True
-except ImportError:
-    _HAS_XVFB = False
 
 
 def _sleep(min_s: float = 1.0, max_s: float = 2.5) -> None:
@@ -68,44 +55,58 @@ class IkeaProvider(BaseProvider):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self.email = os.environ.get("IKEA_EMAIL", "")
-        self.password = os.environ.get("IKEA_PASSWORD", "")
         self.months_back = int(os.environ.get("IKEA_MONTHS_BACK") or "12")
 
     # ── Haupt-Dispatch ─────────────────────────────────────────────
 
     def fetch_invoices(self) -> list[Invoice]:
-        if _CDP_URL:
-            return self._fetch_via_cdp()
-        return self._fetch_local()
+        if not _CDP_URL:
+            logger.error("CHROME_CDP_URL nicht gesetzt – IKEA Provider deaktiviert")
+            return []
+        return self._fetch_via_cdp()
 
     # ── CDP-Modus ──────────────────────────────────────────────────
 
     def _fetch_via_cdp(self) -> list[Invoice]:
         """
-        CDP-Modus: Nutzt den persistenten chrome-desktop Browser.
+        CDP-Modus: Nutzt den persistenten paperflow-chrome Browser.
         Der Nutzer loggt sich einmalig manuell ein (inkl. 2FA).
         Session wird automatisch wiederverwendet.
         """
         invoices: list[Invoice] = []
         logger.info("CDP-Modus: Verbinde mit Chrome auf %s", _CDP_URL)
 
+        # Resolve hostname → IP (Chrome rejects Host headers that are hostnames,
+        # not IPs/localhost, as DNS-rebinding protection).
+        cdp_url = _CDP_URL
+        try:
+            parsed = urllib.parse.urlparse(_CDP_URL)
+            hostname = parsed.hostname or ""
+            if hostname and not hostname.replace(".", "").isdigit():
+                ip = socket.gethostbyname(hostname)
+                port = parsed.port
+                new_netloc = f"{ip}:{port}" if port else ip
+                cdp_url = urllib.parse.urlunparse(parsed._replace(netloc=new_netloc))
+                logger.info("CDP: %s → %s (Host-Header-Fix)", _CDP_URL, cdp_url)
+        except Exception as e:
+            logger.warning("CDP hostname resolution failed, using original URL: %s", e)
+
         # Warten bis Chrome bereit
         for attempt in range(30):
             try:
-                urllib.request.urlopen(f"{_CDP_URL}/json/version", timeout=2)
+                urllib.request.urlopen(f"{cdp_url}/json/version", timeout=2)
                 break
             except Exception:
                 if attempt == 0:
-                    logger.info("Warte auf Chrome CDP (%s)...", _CDP_URL)
+                    logger.info("Warte auf Chrome CDP (%s)...", cdp_url)
                 time.sleep(2)
         else:
-            logger.error("Chrome CDP nicht erreichbar nach 60s: %s", _CDP_URL)
+            logger.error("Chrome CDP nicht erreichbar nach 60s: %s", cdp_url)
             return []
 
         with sync_playwright() as p:
             try:
-                browser = p.chromium.connect_over_cdp(_CDP_URL)
+                browser = p.chromium.connect_over_cdp(cdp_url)
                 logger.info(
                     "Chrome CDP verbunden: %d Context(s)", len(browser.contexts)
                 )
@@ -148,74 +149,7 @@ class IkeaProvider(BaseProvider):
 
         return invoices
 
-    # ── Fallback-Modus ─────────────────────────────────────────────
-
-    def _fetch_local(self) -> list[Invoice]:
-        """Fallback: eigener Chromium-Browser mit Xvfb + automatischem Login."""
-        display = None
-        if _HAS_XVFB:
-            display = _XvfbDisplay(visible=False, size=(1280, 900))
-            display.start()
-            logger.info("Xvfb gestartet")
-
-        pw = sync_playwright().start()
-        browser = pw.chromium.launch(
-            headless=False,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-            ],
-        )
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            locale="de-DE",
-            timezone_id="Europe/Berlin",
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            accept_downloads=True,
-        )
-        context.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-        )
-        invoices: list[Invoice] = []
-
-        try:
-            page = context.new_page()
-            self._load_cookies(context)
-
-            if not self._is_logged_in(page):
-                if not self._login(page):
-                    logger.error("IKEA Login fehlgeschlagen – Abbruch")
-                    return []
-
-            invoices = self._collect_invoices(page)
-            self._save_cookies(context)
-
-        except Exception:
-            logger.exception("IKEA Provider Fehler")
-        finally:
-            try:
-                browser.close()
-            except Exception:
-                pass
-            try:
-                pw.stop()
-            except Exception:
-                pass
-            if display:
-                try:
-                    display.stop()
-                except Exception:
-                    pass
-
-        logger.info("IKEA: %d Rechnungen gefunden", len(invoices))
-        return invoices
-
-    # ── Gemeinsame Scan-Logik ──────────────────────────────────────
+    # ── Scan-Logik ─────────────────────────────────────────────────
 
     def _collect_invoices(self, page: Page) -> list[Invoice]:
         """Bestellscan + Download – wird von CDP- und Fallback-Modus verwendet."""
@@ -258,185 +192,6 @@ class IkeaProvider(BaseProvider):
 
         logger.info("IKEA: %d Rechnungen gefunden", len(invoices))
         return invoices
-
-    # ── Cookie-Verwaltung ──────────────────────────────────────────
-
-    def _save_cookies(self, context: BrowserContext) -> None:
-        cookies = context.cookies()
-        COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
-        COOKIES_FILE.write_text(json.dumps(cookies, ensure_ascii=False, indent=2))
-        logger.info("Cookies gespeichert (%d)", len(cookies))
-
-    def _load_cookies(self, context: BrowserContext) -> bool:
-        if not COOKIES_FILE.exists():
-            return False
-        try:
-            cookies = json.loads(COOKIES_FILE.read_text())
-            context.add_cookies(cookies)
-            logger.info("Cookies geladen (%d)", len(cookies))
-            return True
-        except Exception as e:
-            logger.warning("Cookies nicht ladbar: %s", e)
-            return False
-
-    # ── Login (nur Fallback-Modus) ─────────────────────────────────
-
-    def _is_logged_in(self, page: Page) -> bool:
-        try:
-            page.goto(LOGIN_URL, timeout=30_000)
-            page.wait_for_load_state("networkidle", timeout=20_000)
-            url = page.url
-            logged_in = _is_logged_in_url(url)
-            logger.info("Login-Check: %s → %s", url[:70], "✓" if logged_in else "✗")
-            return logged_in
-        except Exception as e:
-            logger.warning("Login-Check Fehler: %s", e)
-            return False
-
-    def _dismiss_overlays(self, page: Page) -> None:
-        for sel in [
-            "button:has-text('Alle akzeptieren')",
-            "button:has-text('Accept All')",
-            "#onetrust-accept-btn-handler",
-            "[data-testid='accept-all-button']",
-        ]:
-            try:
-                btn = page.query_selector(sel)
-                if btn and btn.is_visible():
-                    btn.click()
-                    _sleep(0.5, 1)
-                    return
-            except Exception:
-                continue
-
-    def _login(self, page: Page) -> bool:
-        if not self.email or not self.password:
-            logger.error("IKEA_EMAIL / IKEA_PASSWORD nicht gesetzt")
-            return False
-
-        logger.info("IKEA Login für %s", self.email)
-        page.goto(LOGIN_URL, timeout=30_000)
-        page.wait_for_load_state("networkidle", timeout=20_000)
-        _sleep(2, 3)
-        self._dismiss_overlays(page)
-
-        # Bereits eingeloggt?
-        if _is_logged_in_url(page.url):
-            logger.info("Bereits eingeloggt (Redirect erkannt)")
-            return True
-
-        # E-Mail Feld suchen
-        email_field = None
-        for sel in [
-            "#username",
-            "input[type='email']",
-            "input[name='username']",
-            "input[autocomplete='email']",
-            "input[autocomplete='username']",
-        ]:
-            try:
-                f = page.wait_for_selector(sel, timeout=5_000)
-                if f and f.is_visible():
-                    email_field = f
-                    logger.info("E-Mail Feld: %s", sel)
-                    break
-            except Exception:
-                continue
-
-        if not email_field:
-            page.screenshot(path="/app/data/ikea_debug_login.png", full_page=True)
-            logger.error("Kein E-Mail-Feld gefunden – Screenshot gespeichert")
-            return False
-
-        email_field.fill(self.email)
-        _sleep(0.5, 1)
-
-        # Weiter-Button – Navigation darf Exception werfen (SPA-Reload)
-        clicked = False
-        for sel in [
-            "button[type='submit']",
-            "button:has-text('Weiter')",
-            "button:has-text('Continue')",
-            "button:has-text('Fortfahren')",
-        ]:
-            try:
-                btn = page.query_selector(sel)
-                if btn and btn.is_visible():
-                    try:
-                        btn.click()
-                    except Exception:
-                        pass  # Navigation/Detach OK
-                    clicked = True
-                    break
-            except Exception:
-                continue
-        if not clicked:
-            try:
-                page.press(
-                    "input[type='email'], #username, input[name='username']", "Enter"
-                )
-            except Exception:
-                pass
-
-        _sleep(2, 3)
-
-        # Passwort Feld
-        pwd_field = None
-        for sel in [
-            "#password",
-            "input[type='password']",
-            "input[name='password']",
-        ]:
-            try:
-                f = page.wait_for_selector(sel, timeout=5_000)
-                if f and f.is_visible():
-                    pwd_field = f
-                    logger.info("Passwort Feld: %s", sel)
-                    break
-            except Exception:
-                continue
-
-        if not pwd_field:
-            logger.error("Kein Passwort-Feld gefunden")
-            return False
-
-        pwd_field.fill(self.password)
-        _sleep(0.5, 1)
-
-        for sel in [
-            "button[type='submit']",
-            "button:has-text('Anmelden')",
-            "button:has-text('Einloggen')",
-            "button:has-text('Sign in')",
-        ]:
-            try:
-                btn = page.query_selector(sel)
-                if btn and btn.is_visible():
-                    try:
-                        btn.click()
-                    except Exception:
-                        pass
-                    break
-            except Exception:
-                continue
-        else:
-            try:
-                pwd_field.press("Enter")
-            except Exception:
-                pass
-
-        page.wait_for_load_state("networkidle", timeout=30_000)
-        _sleep(2, 3)
-
-        logged_in = _is_logged_in_url(page.url)
-        if logged_in:
-            self._save_cookies(context=page.context)
-        logger.info(
-            "Login %s: %s",
-            "erfolgreich" if logged_in else "fehlgeschlagen",
-            page.url[:70],
-        )
-        return logged_in
 
     # ── Bestellliste ───────────────────────────────────────────────
 
