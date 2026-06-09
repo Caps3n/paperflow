@@ -56,6 +56,7 @@ app = FastAPI(title="Invoice Fetcher", docs_url=None, redoc_url=None)
 
 # ── Basic Auth Middleware ──────────────────────────────────────────────────────
 
+
 class _BasicAuthMiddleware(BaseHTTPMiddleware):
     """Schützt alle Routen mit HTTP Basic Auth.
     Nur aktiv wenn UI_PASSWORD gesetzt ist.
