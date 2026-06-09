@@ -157,6 +157,9 @@ class IkeaProvider(BaseProvider):
         yf = os.environ.get("PAPERFLOW_YEARS_FILTER", "").strip()
         if yf:
             years_filter = {int(y) for y in yf.split(",") if y.strip().isdigit()}
+        elif self.scan_from_year:
+            current_year = __import__("datetime").date.today().year
+            years_filter = set(range(self.scan_from_year, current_year + 1))
 
         orders = self._parse_orders(page)
         invoices: list[Invoice] = []

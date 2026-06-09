@@ -484,15 +484,14 @@ class MeinproviderProvider(BaseProvider):
 
 <div id="toast"></div>
 
-<!-- Year Selection Dialog -->
+<!-- Run Confirmation Dialog -->
 <div class="dialog-overlay" id="run-dialog">
-  <div class="dialog-box">
+  <div class="dialog-box" style="text-align:center">
+    <div style="font-size:32px;margin-bottom:12px">▶</div>
     <div class="dialog-title" data-i18n="run_dialog_title">Scan starten</div>
-    <div class="dialog-sub" data-i18n="run_dialog_sub">Wähle die Jahre die gescannt werden sollen. Ohne Auswahl = alle Jahre.</div>
-    <div class="year-grid" id="year-chips"></div>
-    <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+    <div class="dialog-sub" data-i18n="run_dialog_sub">Alle aktiven Provider werden ausgeführt. Jahr-Bereich pro Provider einstellbar unter ⚙️.</div>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:20px">
       <button class="btn btn-ghost" onclick="closeRunDialog()" data-i18n="btn_cancel">Abbrechen</button>
-      <button class="btn btn-ghost btn-sm" onclick="selectAllYears()" data-i18n="all_years">Alle Jahre</button>
       <button class="btn btn-primary" onclick="startRun()" id="btn-start-run">▶ <span data-i18n="btn_run">Jetzt ausführen</span></button>
     </div>
   </div>
@@ -558,8 +557,9 @@ const TRANSLATIONS = {
     col_date: "Datum", col_actions: "Aktionen", retry: "Erneut versuchen",
     logs_sub: "Ausgabe des letzten / laufenden Durchgangs", auto_refresh: "Auto-Refresh",
     run_dialog_title: "Scan starten",
-    run_dialog_sub: "Wähle die Jahre die gescannt werden sollen. Ohne Auswahl = alle Jahre.",
-    all_years: "Alle Jahre",
+    run_dialog_sub: "Alle aktiven Provider werden ausgeführt. Jahr-Bereich pro Provider einstellbar unter ⚙️.",
+    scan_from_year_label: "Scan ab Jahr",
+    scan_from_year_placeholder: "z.B. 2015 (leer = alle)",
     login_required: "Amazon Session abgelaufen",
     login_sub: "Die gespeicherte Amazon-Sitzung ist nicht mehr gültig.",
     otp_title: "SMS-Code eingeben", otp_sub: "Amazon hat dir einen Code per SMS geschickt.",
@@ -597,8 +597,9 @@ const TRANSLATIONS = {
     col_date: "Date", col_actions: "Actions", retry: "Retry",
     logs_sub: "Output of the last / running pass", auto_refresh: "Auto-refresh",
     run_dialog_title: "Start scan",
-    run_dialog_sub: "Select the years to scan. No selection = all years.",
-    all_years: "All years",
+    run_dialog_sub: "All active providers will run. Year range configurable per provider under ⚙️.",
+    scan_from_year_label: "Scan from year",
+    scan_from_year_placeholder: "e.g. 2015 (empty = all)",
     login_required: "Amazon session expired",
     login_sub: "The saved Amazon session is no longer valid.",
     otp_title: "Enter SMS code", otp_sub: "Amazon sent you a code by SMS.",
@@ -750,41 +751,17 @@ async function loadRecentUploads() {
   }
 }
 
-// ── Run dialog with year selection ─────────────────────────────
-let _selectedYears = new Set();
-
+// ── Run dialog ─────────────────────────────────────────────────
 function openRunDialog() {
-  const currentYear = new Date().getFullYear();
-  const startYear = 2010;
-  _selectedYears.clear();
-  const grid = document.getElementById("year-chips");
-  grid.innerHTML = "";
-  for (let y = currentYear; y >= startYear; y--) {
-    const chip = document.createElement("button");
-    chip.className = "year-chip";
-    chip.textContent = y;
-    chip.dataset.year = y;
-    chip.addEventListener("click", () => {
-      if (_selectedYears.has(y)) { _selectedYears.delete(y); chip.classList.remove("selected"); }
-      else { _selectedYears.add(y); chip.classList.add("selected"); }
-    });
-    grid.appendChild(chip);
-  }
   document.getElementById("run-dialog").classList.add("open");
 }
 
 function closeRunDialog() { document.getElementById("run-dialog").classList.remove("open"); }
 
-function selectAllYears() {
-  _selectedYears.clear();
-  document.querySelectorAll(".year-chip").forEach(c => c.classList.remove("selected"));
-}
-
 async function startRun() {
   closeRunDialog();
-  const years = _selectedYears.size > 0 ? Array.from(_selectedYears).sort((a,b)=>b-a) : null;
   try {
-    await api("POST", "/api/run", { years });
+    await api("POST", "/api/run", {});
     toast("▶ " + t("btn_run") + "!", "ok");
     setTimeout(loadDashboard, 1000);
   } catch(e) { toast(e.message, "err"); }
@@ -916,11 +893,16 @@ async function toggleSettings(name) {
   const container = document.getElementById(`psettings-fields-${name}`);
   const currCorr = providerData?.correspondent || "";
   const currTags = providerData?.tags || [];
+  const currScanFromYear = providerData?.scan_from_year || "";
   let html = `<div class="form-row" style="margin-bottom:14px">
     <div class="form-group"><label>Tags <span style="font-size:10px;color:var(--muted);font-weight:400">from Paperless</span></label>
       <select id="ptags-${name}" multiple style="height:90px"><option disabled>${t("loading")}</option></select></div>
     <div class="form-group"><label>Correspondent <span style="font-size:10px;color:var(--muted);font-weight:400">from Paperless</span></label>
       <select id="pcorr-${name}"><option value="">${t("loading")}</option></select></div>
+  </div>
+  <div class="form-group" style="margin-bottom:14px">
+    <label>${t("scan_from_year_label") || "Scan ab Jahr"} <span style="font-size:10px;color:var(--muted);font-weight:400">${t("scan_from_year_placeholder") || "leer = alle Jahre"}</span></label>
+    <input type="number" id="pscan-from-year-${name}" value="${currScanFromYear}" min="1990" max="${new Date().getFullYear()}" placeholder="${t("scan_from_year_placeholder") || "z.B. 2015 (leer = alle)"}">
   </div>`;
   if (settingsData.fields.length > 0) {
     html += `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px">${t("nav_settings")}</div>`;
@@ -1042,11 +1024,13 @@ async function saveProviderSettings(name) {
     : (tagsEl?.value || "").split(",").map(tg=>tg.trim()).filter(Boolean);
   const correspondent = document.getElementById(`pcorr-${name}`)?.value || "";
   const enabled = card.querySelector("input[type=checkbox]").checked;
+  const scanFromYearRaw = document.getElementById(`pscan-from-year-${name}`)?.value;
+  const scan_from_year = scanFromYearRaw && scanFromYearRaw.trim() !== "" ? parseInt(scanFromYearRaw, 10) : null;
   const envValues = {};
   panel.querySelectorAll("[data-envkey]").forEach(el => { envValues[el.dataset.envkey] = el.value; });
   try {
     await Promise.all([
-      api("PUT", `/api/providers/${name}`, { enabled, tags, correspondent }),
+      api("PUT", `/api/providers/${name}`, { enabled, tags, correspondent, scan_from_year }),
       Object.keys(envValues).length ? api("POST", `/api/providers/${name}/settings`, { values: envValues }) : Promise.resolve(),
     ]);
     toast("✓ " + t("btn_save"), "ok");
@@ -1055,14 +1039,15 @@ async function saveProviderSettings(name) {
 }
 
 async function toggleProvider(name, enabled) {
-  const panel = document.getElementById(`psettings-${name}`);
   const tagsEl = document.getElementById(`ptags-${name}`);
   const tags = tagsEl?.tagName === "SELECT"
     ? Array.from(tagsEl.selectedOptions).map(o => o.value)
     : (tagsEl?.value || "").split(",").map(tg=>tg.trim()).filter(Boolean);
   const correspondent = document.getElementById(`pcorr-${name}`)?.value || "";
+  const scanFromYearRaw = document.getElementById(`pscan-from-year-${name}`)?.value;
+  const scan_from_year = scanFromYearRaw && scanFromYearRaw.trim() !== "" ? parseInt(scanFromYearRaw, 10) : null;
   try {
-    await api("PUT", `/api/providers/${name}`, { enabled, tags, correspondent });
+    await api("PUT", `/api/providers/${name}`, { enabled, tags, correspondent, scan_from_year });
     toast(enabled ? `✓ ${name} enabled` : `${name} disabled`, "ok");
   } catch(e) { toast(e.message, "err"); }
 }

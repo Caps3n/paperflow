@@ -48,6 +48,7 @@ class BaseProvider:
         self.config = config
         self.tags: list[str] = config.get("tags", [])
         self.correspondent: str | None = config.get("correspondent")
+        self.scan_from_year: int | None = config.get("scan_from_year")
         self.download_dir = Path("/app/downloads") / self.provider_name
         self.download_dir.mkdir(parents=True, exist_ok=True)
         self.logger = logging.getLogger(f"provider.{self.provider_name}")

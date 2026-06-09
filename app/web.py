@@ -405,6 +405,7 @@ async def list_providers():
                 "enabled": pc.get("enabled", False),
                 "tags": pc.get("tags", []),
                 "correspondent": pc.get("correspondent", ""),
+                "scan_from_year": pc.get("scan_from_year"),
                 "custom": name in [p.stem for p in PROVIDERS_DIR.glob("*.py")],
                 "has_env_settings": name in PROVIDER_ENV_FIELDS,
             }
@@ -434,6 +435,7 @@ class ProviderUpdate(BaseModel):
     enabled: bool
     tags: list[str] = []
     correspondent: str = ""
+    scan_from_year: int | None = None
 
 
 @app.put("/api/providers/{name}")
@@ -441,11 +443,14 @@ async def update_provider(name: str, body: ProviderUpdate):
     if re.search(r"[^a-z0-9_]", name):
         raise HTTPException(400, "Ungültiger Provider-Name")
     cfg = _read_config()
-    cfg.setdefault("providers", {})[name] = {
+    entry: dict = {
         "enabled": body.enabled,
         "tags": body.tags,
         "correspondent": body.correspondent,
     }
+    if body.scan_from_year is not None:
+        entry["scan_from_year"] = body.scan_from_year
+    cfg.setdefault("providers", {})[name] = entry
     _write_config(cfg)
     return {"ok": True}
 

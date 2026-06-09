@@ -93,7 +93,10 @@ class AmazonProvider(BaseProvider):
         self.email = os.environ["AMAZON_EMAIL"]
         self.password = os.environ["AMAZON_PASSWORD"]
         self.domain = os.environ.get("AMAZON_DOMAIN", "amazon.de")
-        self.start_year = int(os.environ.get("AMAZON_START_YEAR", "2009"))
+        # scan_from_year aus providers.yml hat Vorrang vor AMAZON_START_YEAR env var
+        self.start_year = int(
+            config.get("scan_from_year") or os.environ.get("AMAZON_START_YEAR", "2009")
+        )
         self.urls = self.DOMAINS.get(self.domain, self.DOMAINS["amazon.de"])
         # Incremental-Modus: nur letzte 30 Tage scannen (für tägliche Läufe)
         self.incremental = os.environ.get("AMAZON_INCREMENTAL", "").lower() in (
