@@ -17,7 +17,7 @@ providers:
 
   ikea:
     enabled: false
-    tags: ["IKEA", "Rechnung"]
+    tags: ["IKEA", "Kassenbon"]
     correspondent: "IKEA"
 
   # Weitere Provider können hier hinzugefügt werden:

@@ -274,6 +274,15 @@ PROVIDER_ENV_FIELDS: dict[str, list[dict]] = {
         },
         {"key": "AMAZON_OTP_CODE", "label": "2FA OTP (einmalig)", "type": "text"},
     ],
+    "ikea": [
+        {"key": "IKEA_EMAIL", "label": "IKEA E-Mail", "type": "email"},
+        {"key": "IKEA_PASSWORD", "label": "IKEA Passwort", "type": "password"},
+        {
+            "key": "IKEA_MONTHS_BACK",
+            "label": "Monate rückwirkend (z.B. 12)",
+            "type": "number",
+        },
+    ],
     "paypal": [
         {"key": "PAYPAL_EMAIL", "label": "PayPal E-Mail", "type": "email"},
         {"key": "PAYPAL_PASSWORD", "label": "PayPal Passwort", "type": "password"},
