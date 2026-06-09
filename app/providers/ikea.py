@@ -202,14 +202,43 @@ class IkeaProvider(BaseProvider):
 
     # ── Bestellliste ───────────────────────────────────────────────
 
+    # Mögliche Selektoren für den "Mehr anzeigen"-Button auf IKEA
+    _LOAD_MORE_SELECTORS = [
+        "button:has-text('Mehr anzeigen')",
+        "button:has-text('Weitere Bestellungen')",
+        "button:has-text('Mehr laden')",
+        "button:has-text('Load more')",
+        "button:has-text('Show more')",
+        "[data-testid='load-more']",
+        "[data-testid='show-more']",
+    ]
+
     def _parse_orders(self, page: Page) -> list[dict]:
-        """Liest alle Bestellungen aus der Übersichtsseite."""
+        """Liest alle Bestellungen aus der Übersichtsseite (inkl. Pagination)."""
         page.goto(PURCHASES_URL, timeout=30_000)
         try:
             page.wait_for_load_state("load", timeout=15_000)
         except Exception:
             pass
         _sleep(2, 3)
+
+        # "Mehr anzeigen"-Button solange klicken bis er verschwindet
+        while True:
+            clicked = False
+            for sel in self._LOAD_MORE_SELECTORS:
+                try:
+                    btn = page.query_selector(sel)
+                    if btn and btn.is_visible():
+                        logger.info("Klicke 'Mehr laden'-Button (%s)", sel)
+                        btn.scroll_into_view_if_needed()
+                        btn.click()
+                        _sleep(2, 3)
+                        clicked = True
+                        break
+                except Exception:
+                    continue
+            if not clicked:
+                break  # Kein Button mehr → alle Bestellungen geladen
 
         orders = []
         seen: set[str] = set()
