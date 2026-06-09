@@ -20,6 +20,11 @@ providers:
     tags: ["IKEA", "Kassenbon"]
     correspondent: "IKEA"
 
+  klarna:
+    enabled: false
+    tags: ["Klarna", "Kaufbeleg"]
+    correspondent: "Klarna"
+
   # Weitere Provider können hier hinzugefügt werden:
   # ebay:
   #   enabled: false

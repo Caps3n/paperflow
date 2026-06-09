@@ -243,6 +243,11 @@
         <button class="lang-btn active" onclick="setLang('de')">🇩🇪 DE</button>
         <button class="lang-btn" onclick="setLang('en')">🇬🇧 EN</button>
       </div>
+      <a href="https://buymeacoffee.com/caps3n" target="_blank" rel="noopener noreferrer"
+         style="display:flex;align-items:center;gap:8px;margin-top:14px;padding:8px 10px;border-radius:8px;background:#ffdd00;color:#000;text-decoration:none;font-size:12px;font-weight:700;transition:.15s"
+         onmouseover="this.style.background='#f5d000'" onmouseout="this.style.background='#ffdd00'">
+        <span style="font-size:16px">☕</span> Buy me a coffee
+      </a>
     </div>
   </div>
 
@@ -421,6 +426,7 @@ class MeinproviderProvider(BaseProvider):
           <option value="" data-i18n="all_provider">Alle Provider</option>
           <option value="amazon">Amazon</option>
           <option value="ikea">IKEA</option>
+          <option value="klarna">Klarna</option>
         </select>
         <button class="btn btn-ghost btn-sm" onclick="loadHistory()">🔄 <span data-i18n="btn_refresh">Aktualisieren</span></button>
         <span id="history-count" style="color:var(--muted);font-size:12px;margin-left:4px"></span>
@@ -658,7 +664,7 @@ async function api(method, path, body) {
   return r.json();
 }
 
-const PROVIDER_ICONS = { amazon: "🛒", ebay: "🏷️", paypal: "💳", zalando: "👟", otto: "🛍️", default: "📦" };
+const PROVIDER_ICONS = { amazon: "🛒", ebay: "🏷️", paypal: "💳", zalando: "👟", otto: "🛍️", ikea: "🪑", klarna: "🟡", default: "📦" };
 
 // ══════════════════════════════════════════════════════════════════
 // DASHBOARD

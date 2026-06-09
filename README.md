@@ -6,6 +6,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)
 ![Python](https://img.shields.io/badge/python-3.12-blue?logo=python)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-ffdd00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/caps3n)
 
 paperflow runs as a Docker container, periodically logs into your provider accounts, downloads invoices as PDFs, and uploads them to your Paperless-NGX instance — fully automatically. A SQLite database tracks which invoices have already been processed to avoid duplicates.
 
@@ -15,7 +16,7 @@ A built-in **web interface** (port `8085`) lets you configure everything, manage
 
 ## ✨ Features
 
-- **Automatic invoice download** from Amazon.de / Amazon.com and IKEA
+- **Automatic invoice download** from Amazon.de / Amazon.com, IKEA, and Klarna
 - **Paperless-NGX upload** via REST API — sets tags, correspondent, date, and title automatically
 - **Product title extraction** — Paperless title shows the actual product name, not just the order number
 - **Duplicate prevention** — SQLite database tracks every processed invoice
@@ -134,12 +135,12 @@ paperflow connects to Chrome over CDP (Chrome DevTools Protocol), uses the live 
 
 ---
 
-## 🔐 Browser Login (Amazon & IKEA)
+## 🔐 Browser Login (Amazon, IKEA & Klarna)
 
 paperflow uses a persistent Chrome browser (`paperflow-chrome`) so you only log in once:
 
 1. Open **http://\<server\>:6080** in your browser (noVNC web UI)
-2. Log into Amazon or IKEA — including any 2FA prompts
+2. Log into Amazon, IKEA, or Klarna — including any 2FA prompts
 3. Start a scan from the web UI — your session is reused automatically
 
 **Alternative — Cookie import (no VNC needed):**
@@ -198,7 +199,8 @@ paperflow/
 │   └── providers/
 │       ├── __init__.py      # BaseProvider + Invoice dataclass
 │       ├── amazon.py        # Amazon provider (CDP mode + fallback)
-│       └── ikea.py          # IKEA provider (CDP mode + cookie import)
+│       ├── ikea.py          # IKEA provider (CDP mode + cookie import)
+│       └── klarna.py        # Klarna provider (CDP mode, Kaufbelege)
 ├── chrome-desktop/          # Chrome + noVNC Docker image (paperflow-chrome)
 │   ├── Dockerfile
 │   └── start.sh
