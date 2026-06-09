@@ -935,9 +935,9 @@ async function toggleSettings(name) {
   const currCorr = providerData?.correspondent || "";
   const currTags = providerData?.tags || [];
   let html = `<div class="form-row" style="margin-bottom:14px">
-    <div class="form-group"><label>Tags <span style="font-size:10px;color:var(--muted);font-weight:400">aus Paperless</span></label>
+    <div class="form-group"><label>Tags <span style="font-size:10px;color:var(--muted);font-weight:400">from Paperless</span></label>
       <select id="ptags-${name}" multiple style="height:90px"><option disabled>${t("loading")}</option></select></div>
-    <div class="form-group"><label>Korrespondent <span style="font-size:10px;color:var(--muted);font-weight:400">aus Paperless</span></label>
+    <div class="form-group"><label>Correspondent <span style="font-size:10px;color:var(--muted);font-weight:400">from Paperless</span></label>
       <select id="pcorr-${name}"><option value="">${t("loading")}</option></select></div>
   </div>`;
   if (settingsData.fields.length > 0) {
@@ -957,32 +957,32 @@ async function toggleSettings(name) {
   }
   if (name === "amazon") {
     const cookieStatus = await api("GET", "/api/amazon/cookies-status").catch(() => ({ loaded: false }));
-    const statusText = cookieStatus.loaded ? `✅ ${cookieStatus.count} Cookies` : `⚠️ Keine Cookies – Login nötig`;
-    const expiresText = cookieStatus.expires ? ` · Läuft ab: ${new Date(cookieStatus.expires * 1000).toLocaleDateString("de-DE")}` : "";
+    const statusText = cookieStatus.loaded ? `✅ ${cookieStatus.count} Cookies` : `⚠️ No cookies – login required`;
+    const expiresText = cookieStatus.expires ? ` · Expires: ${new Date(cookieStatus.expires * 1000).toLocaleDateString()}` : "";
     html += `<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px">🍪 Cookie-Import</div>
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px">🍪 Cookie Import</div>
       <div style="font-size:12px;margin-bottom:8px">${statusText}${expiresText}</div>
       <textarea id="cookie-import-${name}" rows="3" placeholder='[{"name":"session-id","value":"..."}]'
         style="width:100%;font-size:11px;font-family:monospace;resize:vertical;margin-bottom:8px"></textarea>
-      <button class="btn btn-primary btn-sm" onclick="importCookies('${name}')">📥 Cookies importieren</button>
+      <button class="btn btn-primary btn-sm" onclick="importCookies('${name}')">📥 Import cookies</button>
     </div>`;
   }
   if (name === "ikea") {
     const cs = await api("GET", "/api/ikea/cookies-status").catch(() => ({ has_cookies: false }));
-    const statusText = cs.has_cookies ? `✅ ${cs.count} Cookies gespeichert` : `⚠️ Noch nicht eingeloggt`;
+    const statusText = cs.has_cookies ? `✅ ${cs.count} cookies saved` : `⚠️ Not logged in yet`;
     html += `<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px">🍪 IKEA Cookie-Import</div>
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px">🍪 IKEA Cookie Import</div>
       <div style="font-size:12px;margin-bottom:10px">${statusText}</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
-        1. Logge dich in deinem Browser auf <strong>ikea.com</strong> ein (inkl. 2FA)<br>
-        2. Installiere <a href="https://cookie-editor.com" target="_blank" style="color:var(--accent)">Cookie Editor</a> → „Export as JSON"<br>
-        3. JSON hier einfügen und importieren
+        1. Log in to <strong>ikea.com</strong> in your browser (incl. 2FA)<br>
+        2. Install <a href="https://cookie-editor.com" target="_blank" style="color:var(--accent)">Cookie Editor</a> → "Export as JSON"<br>
+        3. Paste the JSON here and import
       </div>
       <textarea id="cookie-import-ikea" rows="3" placeholder='[{"name":"idp_...","value":"...","domain":".ikea.com",...}]'
         style="width:100%;font-size:11px;font-family:monospace;resize:vertical;margin-bottom:8px"></textarea>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-primary btn-sm" onclick="ikeaImportCookies()">📥 Cookies importieren</button>
-        <button class="btn btn-ghost btn-sm" onclick="ikeaResetSession()">🗑 Session löschen</button>
+        <button class="btn btn-primary btn-sm" onclick="ikeaImportCookies()">📥 Import cookies</button>
+        <button class="btn btn-ghost btn-sm" onclick="ikeaResetSession()">🗑 Delete session</button>
         <button class="btn btn-ghost btn-sm" onclick="ikeaOpenLogin()" title="Nur wenn VNC-Browser verfügbar">🌐 Via Browser</button>
       </div>
     </div>`;
@@ -1008,7 +1008,7 @@ async function loadPaperlessTags(providerName, selectedTags) {
     for (const tag of selectedTags) {
       if (!tags.find(tg => tg.name === tag)) {
         const opt = document.createElement("option");
-        opt.value = tag; opt.textContent = `${tag} (lokal)`; opt.selected = true;
+        opt.value = tag; opt.textContent = `${tag} (local)`; opt.selected = true;
         sel.insertBefore(opt, sel.firstChild);
       }
     }
@@ -1023,7 +1023,7 @@ async function loadPaperlessCorrespondents(providerName, currentValue) {
   try {
     const data = await api("GET", "/api/paperless/correspondents");
     const corrs = data.correspondents || [];
-    sel.innerHTML = '<option value="">— kein —</option>';
+    sel.innerHTML = '<option value="">— none —</option>';
     for (const c of corrs) {
       const opt = document.createElement("option");
       opt.value = c.name; opt.textContent = c.name;
@@ -1032,7 +1032,7 @@ async function loadPaperlessCorrespondents(providerName, currentValue) {
     }
     if (currentValue && !corrs.find(c => c.name === currentValue)) {
       const opt = document.createElement("option");
-      opt.value = currentValue; opt.textContent = `${currentValue} (lokal)`; opt.selected = true;
+      opt.value = currentValue; opt.textContent = `${currentValue} (local)`; opt.selected = true;
       sel.insertBefore(opt, sel.children[1]);
     }
   } catch {
@@ -1042,10 +1042,10 @@ async function loadPaperlessCorrespondents(providerName, currentValue) {
 
 async function importCookies(name) {
   const raw = document.getElementById(`cookie-import-${name}`)?.value?.trim();
-  if (!raw) { toast("Bitte JSON einfügen", "err"); return; }
+  if (!raw) { toast("Please paste JSON", "err"); return; }
   try {
     await api("POST", "/api/amazon/import-cookies", { cookies: raw });
-    toast("✓ Cookies importiert", "ok");
+    toast("✓ Cookies imported", "ok");
     document.getElementById(`cookie-import-${name}`).value = "";
     toggleSettings(name); toggleSettings(name);
   } catch(e) { toast(e.message, "err"); }
@@ -1081,13 +1081,13 @@ async function toggleProvider(name, enabled) {
   const correspondent = document.getElementById(`pcorr-${name}`)?.value || "";
   try {
     await api("PUT", `/api/providers/${name}`, { enabled, tags, correspondent });
-    toast(enabled ? `✓ ${name} aktiviert` : `${name} deaktiviert`, "ok");
+    toast(enabled ? `✓ ${name} enabled` : `${name} disabled`, "ok");
   } catch(e) { toast(e.message, "err"); }
 }
 
 async function deleteProvider(name) {
-  if (!confirm(`Provider "${name}" wirklich löschen?`)) return;
-  try { await api("DELETE", `/api/providers/${name}`); toast("🗑 Gelöscht", "ok"); loadProviders(); }
+  if (!confirm(`Really delete provider "${name}"?`)) return;
+  try { await api("DELETE", `/api/providers/${name}`); toast("🗑 Deleted", "ok"); loadProviders(); }
   catch(e) { toast(e.message, "err"); }
 }
 
@@ -1106,7 +1106,7 @@ async function uploadFile(file) {
     const r = await fetch("/api/providers/upload", { method: "POST", body: form });
     if (!r.ok) { const e = await r.json(); throw new Error(e.detail); }
     const data = await r.json();
-    toast(`✓ Provider "${data.name}" gespeichert`, "ok");
+    toast(`✓ Provider "${data.name}" saved`, "ok");
     loadProviders();
   } catch(e) { toast(e.message, "err"); }
 }
@@ -1174,7 +1174,7 @@ async function bulkRetry() {
   try { await api("POST", "/api/history/bulk/retry", { ids: Array.from(_selection) }); clearSelection(); toast("🔄 " + t("retry"), "ok"); loadHistory(); } catch(e) { toast(e.message, "err"); }
 }
 async function bulkDelete() {
-  try { await api("DELETE", "/api/history/bulk", { ids: Array.from(_selection) }); clearSelection(); toast("🗑 Gelöscht", "ok"); loadHistory(); } catch(e) { toast(e.message, "err"); }
+  try { await api("DELETE", "/api/history/bulk", { ids: Array.from(_selection) }); clearSelection(); toast("🗑 Deleted", "ok"); loadHistory(); } catch(e) { toast(e.message, "err"); }
 }
 document.getElementById("history-filter-status").addEventListener("change", loadHistory);
 document.getElementById("history-filter-provider").addEventListener("change", loadHistory);
@@ -1255,18 +1255,18 @@ async function captureRecorder() {
     document.getElementById("capture-domain").textContent = data.domain;
     document.getElementById("capture-result").style.display = "block";
     toast(`✓ ${data.title || data.url}`, "ok");
-  } catch(e) { toast(`Fehler: ${e.message}`, "err"); }
+  } catch(e) { toast(`Error: ${e.message}`, "err"); }
   finally { btn.disabled = false; btn.querySelector("span").textContent = t("btn_capture"); }
 }
 
 function copyTemplate() {
   navigator.clipboard.writeText(document.getElementById("template-editor").value)
-    .then(() => toast("✓ " + t("btn_copy"), "ok")).catch(() => toast("Fehler", "err"));
+    .then(() => toast("✓ " + t("btn_copy"), "ok")).catch(() => toast("Error", "err"));
 }
 
 async function saveTemplate() {
   const code = document.getElementById("template-editor").value;
-  if (!code.trim()) { toast("Kein Template", "err"); return; }
+  if (!code.trim()) { toast("No template", "err"); return; }
   const m = code.match(/provider_name\s*=\s*["']([^"']+)["']/);
   const name = m ? m[1] : "custom_provider";
   const file = new File([code], `${name}.py`, { type: "text/plain" });
@@ -1275,7 +1275,7 @@ async function saveTemplate() {
     const r = await fetch("/api/providers/upload", { method: "POST", body: form });
     if (!r.ok) { const e = await r.json(); throw new Error(e.detail); }
     const data = await r.json();
-    toast(`✓ Provider "${data.name}" gespeichert`, "ok");
+    toast(`✓ Provider "${data.name}" saved`, "ok");
     document.getElementById("capture-result").style.display = "none";
     loadProviders();
   } catch(e) { toast(e.message, "err"); }
@@ -1291,7 +1291,7 @@ async function submitOtp() {
     await api("POST", "/api/otp", { code });
     document.getElementById("otp-modal").classList.remove("open");
     document.getElementById("otp-input").value = "";
-    toast("✓ Code eingegeben", "ok");
+    toast("✓ Code entered", "ok");
   } catch(e) { toast(e.message, "err"); }
 }
 
@@ -1306,17 +1306,17 @@ async function pollOtp() {
 }
 
 async function resetAndRelogin() {
-  try { await api("POST", "/api/amazon/reset-session"); document.getElementById("login-modal").classList.remove("open"); toast("✓ Session zurückgesetzt", "ok"); } catch(e) { toast(e.message, "err"); }
+  try { await api("POST", "/api/amazon/reset-session"); document.getElementById("login-modal").classList.remove("open"); toast("✓ Session reset", "ok"); } catch(e) { toast(e.message, "err"); }
 }
 
 function dismissLoginModal() { document.getElementById("login-modal").classList.remove("open"); }
 
 async function ikeaImportCookies() {
   const raw = document.getElementById("cookie-import-ikea")?.value?.trim();
-  if (!raw) { toast("Bitte Cookies einfügen", "err"); return; }
+  if (!raw) { toast("Please paste cookies", "err"); return; }
   try {
     const r = await api("POST", "/api/ikea/import-cookies", { cookies: raw });
-    toast(`✅ ${r.count} IKEA Cookies importiert`, "ok");
+    toast(`✅ ${r.count} IKEA cookies imported`, "ok");
     document.getElementById("cookie-import-ikea").value = "";
     await toggleSettings("ikea");  // close
     await toggleSettings("ikea");  // reopen with fresh cookie status
@@ -1326,12 +1326,12 @@ async function ikeaImportCookies() {
 async function ikeaOpenLogin() {
   try {
     await api("POST", "/api/ikea/open-login");
-    toast("🌐 IKEA Login geöffnet – im Browser (noVNC) einloggen", "ok");
+    toast("🌐 IKEA login opened – log in via the browser", "ok");
   } catch(e) { toast(e.message, "err"); }
 }
 
 async function ikeaResetSession() {
-  try { await api("POST", "/api/ikea/reset-session"); toast("🗑 IKEA Session gelöscht", "ok"); toggleSettings("ikea"); } catch(e) { toast(e.message, "err"); }
+  try { await api("POST", "/api/ikea/reset-session"); toast("🗑 IKEA session deleted", "ok"); toggleSettings("ikea"); } catch(e) { toast(e.message, "err"); }
 }
 
 // ══════════════════════════════════════════════════════════════════
