@@ -244,8 +244,8 @@ def _scheduler_loop(interval_hours: int) -> None:
 def main() -> None:
     database.init_db()
 
-    interval_hours = int(os.environ.get("RUN_INTERVAL_HOURS", "24"))
-    run_on_startup = os.environ.get("RUN_ON_STARTUP", "true").lower() == "true"
+    interval_hours = int(os.environ.get("RUN_INTERVAL_HOURS") or "24")
+    run_on_startup = (os.environ.get("RUN_ON_STARTUP") or "true").lower() == "true"
 
     logger.info("=" * 60)
     logger.info("paperflow v%s", __version__)
