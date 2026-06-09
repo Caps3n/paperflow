@@ -126,7 +126,10 @@ class IkeaProvider(BaseProvider):
             try:
                 # Login-Check
                 page.goto(LOGIN_URL, timeout=30_000)
-                page.wait_for_load_state("networkidle", timeout=20_000)
+                try:
+                    page.wait_for_load_state("load", timeout=15_000)
+                except Exception:
+                    pass  # Seite lädt evtl. noch Tracker – egal, Login-Check trotzdem
                 _sleep(1, 2)
 
                 if not _is_logged_in_url(page.url):
