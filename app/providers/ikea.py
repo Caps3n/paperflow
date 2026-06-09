@@ -204,7 +204,10 @@ class IkeaProvider(BaseProvider):
     def _parse_orders(self, page: Page) -> list[dict]:
         """Liest alle Bestellungen aus der Übersichtsseite."""
         page.goto(PURCHASES_URL, timeout=30_000)
-        page.wait_for_load_state("networkidle", timeout=20_000)
+        try:
+            page.wait_for_load_state("load", timeout=15_000)
+        except Exception:
+            pass
         _sleep(2, 3)
 
         orders = []
@@ -254,7 +257,10 @@ class IkeaProvider(BaseProvider):
         """Öffnet Bestelldetail und lädt den Kassenbon herunter."""
         logger.info("Lade Kassenbon für %s", order["id"])
         page.goto(order["url"], timeout=30_000)
-        page.wait_for_load_state("networkidle", timeout=20_000)
+        try:
+            page.wait_for_load_state("load", timeout=15_000)
+        except Exception:
+            pass
         _sleep(2, 3)
 
         receipt_btn = None
