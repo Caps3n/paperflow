@@ -125,30 +125,49 @@ class AmazonProvider(BaseProvider):
         invoices: list[Invoice] = []
         logger.info("CDP-Modus: Verbinde mit Chrome auf %s", _CDP_URL)
 
-        # Warten bis Chrome bereit ist (Container-Start kann etwas dauern)
+        # Resolve hostname → IP before connecting.
+        # Chrome rejects CDP requests where the Host header is a hostname
+        # (not an IP or localhost) as a DNS-rebinding protection measure.
+        import socket
+        import urllib.parse
         import urllib.request
 
+        cdp_url = _CDP_URL
+        try:
+            parsed = urllib.parse.urlparse(_CDP_URL)
+            hostname = parsed.hostname or ""
+            # Only resolve if it's actually a hostname (not already an IP)
+            if hostname and not hostname.replace(".", "").isdigit():
+                ip = socket.gethostbyname(hostname)
+                port = parsed.port
+                new_netloc = f"{ip}:{port}" if port else ip
+                cdp_url = urllib.parse.urlunparse(parsed._replace(netloc=new_netloc))
+                logger.info("CDP: %s → %s (Host-Header-Fix)", _CDP_URL, cdp_url)
+        except Exception as e:
+            logger.warning("CDP hostname resolution failed, using original URL: %s", e)
+
+        # Wait until Chrome is ready (container start may take a moment)
         for attempt in range(30):
             try:
-                urllib.request.urlopen(f"{_CDP_URL}/json/version", timeout=2)
+                urllib.request.urlopen(f"{cdp_url}/json/version", timeout=2)
                 break
             except Exception:
                 if attempt == 0:
-                    logger.info("Warte auf Chrome CDP (%s)...", _CDP_URL)
+                    logger.info("Waiting for Chrome CDP (%s)...", cdp_url)
                 time.sleep(2)
         else:
-            logger.error("Chrome CDP nicht erreichbar nach 60s: %s", _CDP_URL)
+            logger.error("Chrome CDP unreachable after 60s: %s", cdp_url)
             return []
 
         with sync_playwright() as p:
             try:
-                browser = p.chromium.connect_over_cdp(_CDP_URL)
+                browser = p.chromium.connect_over_cdp(cdp_url)
                 logger.info(
                     "Chrome CDP verbunden: %d Context(s) vorhanden",
                     len(browser.contexts),
                 )
             except Exception as e:
-                logger.error("CDP-Verbindung fehlgeschlagen: %s", e)
+                logger.error("CDP connection failed: %s", e)
                 return []
 
             # Bestehenden Context verwenden (hat Amazon-Session) oder neuen erstellen
