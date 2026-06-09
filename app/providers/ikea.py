@@ -114,8 +114,12 @@ class IkeaProvider(BaseProvider):
             page.goto(LOGIN_URL, timeout=30_000)
             page.wait_for_load_state("networkidle", timeout=20_000)
             url = page.url
-            # Wenn IKEA eingeloggt ist, leitet es zur loyalty-hub oder purchases um
-            logged_in = "/profile/login" not in url
+            # Eingeloggt = zu loyalty-hub oder purchases umgeleitet
+            # Nicht eingeloggt = auf accounts.ikea.com (SSO/OAuth) oder profile/login gelandet
+            logged_in = (
+                "accounts.ikea.com" not in url
+                and "/profile/login" not in url
+            )
             logger.info("Login-Check: %s → %s", url[:70], "✓" if logged_in else "✗")
             return logged_in
         except Exception as e:
@@ -149,8 +153,8 @@ class IkeaProvider(BaseProvider):
         _sleep(2, 3)
         self._dismiss_overlays(page)
 
-        # Bereits eingeloggt?
-        if "/profile/login" not in page.url:
+        # Bereits eingeloggt? (nicht auf accounts.ikea.com = SSO-Login-Seite, nicht auf /profile/login)
+        if "accounts.ikea.com" not in page.url and "/profile/login" not in page.url:
             logger.info("Bereits eingeloggt (Redirect erkannt)")
             return True
 
@@ -241,7 +245,10 @@ class IkeaProvider(BaseProvider):
         page.wait_for_load_state("networkidle", timeout=30_000)
         _sleep(2, 3)
 
-        logged_in = "/profile/login" not in page.url
+        logged_in = (
+            "accounts.ikea.com" not in page.url
+            and "/profile/login" not in page.url
+        )
         if logged_in:
             self._save_cookies(context=page.context)
         logger.info(
