@@ -28,6 +28,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import base64 as _base64
+
 import requests as _requests
 from playwright.sync_api import Page, sync_playwright
 
@@ -324,60 +326,76 @@ class IkeaProvider(BaseProvider):
                     with page.expect_download(timeout=30_000) as dl_info:
                         dl_btn.click()
                     download = dl_info.value
-                    download.save_as(str(out_path))
+                    # CDP-Modus: Browser läuft in separatem Container.
+                    # download.url kann ein data:-URL sein (base64-kodiertes PDF) →
+                    # direkt dekodieren statt save_as() zu nutzen.
+                    pdf_bytes: bytes | None = None
 
-                    # CDP-Modus: Browser läuft in separatem Container →
-                    # save_as() liefert manchmal leere Datei oder HTML-Fehlerseite statt PDF.
-                    # Prüfung: Datei muss existieren UND mit PDF-Magic-Bytes (%PDF) beginnen.
-                    def _is_valid_pdf(p: Path) -> bool:
+                    if download.url.startswith("data:"):
+                        # data:application/pdf;base64,JVBERi...
                         try:
-                            return (
-                                p.exists()
-                                and p.stat().st_size > 500
-                                and p.read_bytes()[:4] == b"%PDF"
-                            )
-                        except Exception:
-                            return False
-
-                    if not _is_valid_pdf(out_path):
-                        size = out_path.stat().st_size if out_path.exists() else 0
-                        logger.info(
-                            "Kein gültiges PDF (%d bytes) – versuche Direkt-Download: %s",
-                            size,
-                            download.url,
-                        )
-                        try:
-                            cookies = {
-                                c["name"]: c["value"] for c in page.context.cookies()
-                            }
-                            resp = _requests.get(
-                                download.url,
-                                cookies=cookies,
-                                timeout=30,
-                                headers={"User-Agent": "Mozilla/5.0"},
-                            )
-                            content = resp.content
-                            if (
-                                resp.ok
-                                and len(content) > 500
-                                and content[:4] == b"%PDF"
-                            ):
-                                out_path.write_bytes(content)
-                                logger.info(
-                                    "Direkt-Download OK: %d bytes", len(content)
-                                )
-                            else:
-                                logger.warning(
-                                    "Direkt-Download kein PDF: status=%s size=%d",
-                                    resp.status_code,
-                                    len(content),
-                                )
-                                return None
+                            _, b64 = download.url.split(",", 1)
+                            pdf_bytes = _base64.b64decode(b64)
+                            logger.info("Data-URL dekodiert: %d bytes", len(pdf_bytes))
                         except Exception as de:
-                            logger.warning("Direkt-Download Fehler: %s", de)
-                            return None
+                            logger.warning(
+                                "Data-URL Dekodierung fehlgeschlagen: %s", de
+                            )
+                    else:
+                        # Normaler HTTP-Download: save_as() versuchen
+                        download.save_as(str(out_path))
+                        if out_path.exists() and out_path.stat().st_size > 500:
+                            candidate = out_path.read_bytes()
+                            if candidate[:4] == b"%PDF":
+                                pdf_bytes = candidate
+                            else:
+                                logger.info(
+                                    "save_as() kein PDF (%d bytes) – versuche requests",
+                                    len(candidate),
+                                )
 
-                    logger.info("Kassenbon gespeichert: %s", out_path.name)
+                        if pdf_bytes is None:
+                            # Fallback: HTTP-Download mit Browser-Cookies
+                            try:
+                                cookies = {
+                                    c["name"]: c["value"]
+                                    for c in page.context.cookies()
+                                }
+                                resp = _requests.get(
+                                    download.url,
+                                    cookies=cookies,
+                                    timeout=30,
+                                    headers={"User-Agent": "Mozilla/5.0"},
+                                )
+                                content = resp.content
+                                if (
+                                    resp.ok
+                                    and len(content) > 500
+                                    and content[:4] == b"%PDF"
+                                ):
+                                    pdf_bytes = content
+                                    logger.info(
+                                        "HTTP-Fallback OK: %d bytes", len(content)
+                                    )
+                                else:
+                                    logger.warning(
+                                        "HTTP-Fallback kein PDF: status=%s size=%d",
+                                        resp.status_code,
+                                        len(content),
+                                    )
+                            except Exception as de:
+                                logger.warning("HTTP-Fallback Fehler: %s", de)
+
+                    if pdf_bytes is None or pdf_bytes[:4] != b"%PDF":
+                        logger.warning("Kein gültiges PDF für %s", order["id"])
+                        return None
+
+                    out_path.write_bytes(pdf_bytes)
+                    logger.info(
+                        "Kassenbon gespeichert: %s (%d bytes)",
+                        out_path.name,
+                        len(pdf_bytes),
+                    )
                     return out_path
             except Exception as e:
                 logger.warning("Download fehlgeschlagen (%s): %s", sel, e)
