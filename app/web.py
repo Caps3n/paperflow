@@ -56,6 +56,7 @@ app = FastAPI(title="Invoice Fetcher", docs_url=None, redoc_url=None)
 
 # ── CDP URL Helper ────────────────────────────────────────────────────────────
 
+
 def _get_cdp_url() -> str:
     """Always reads CHROME_CDP_URL fresh (user may update it via web UI)."""
     return os.environ.get("CHROME_CDP_URL", "").strip()
@@ -65,6 +66,7 @@ def _resolve_cdp_url(cdp_url: str) -> str:
     """Resolve hostname → IP so Chrome's Host-header DNS-rebinding check passes."""
     import socket
     import urllib.parse
+
     try:
         parsed = urllib.parse.urlparse(cdp_url)
         hostname = parsed.hostname or ""
@@ -592,6 +594,7 @@ async def ikea_open_login():
     resolved = _resolve_cdp_url(cdp_url)
     try:
         import urllib.request as _ur
+
         _ur.urlopen(f"{resolved}/json/version", timeout=3)
     except Exception:
         raise HTTPException(503, "Chrome CDP nicht erreichbar")
