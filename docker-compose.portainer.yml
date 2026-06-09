@@ -1,7 +1,7 @@
 version: "3.8"
 
 # ═══════════════════════════════════════════════════════════════════
-#  paperflow v1.0.0 – Portainer Stack
+#  paperflow – Portainer Stack
 #
 #  Deployment via Portainer → Stacks → Add Stack → Repository:
 #    Repository URL:   https://github.com/Caps3n/paperflow
@@ -13,23 +13,25 @@ version: "3.8"
 #    PAPERLESS_TOKEN    API-Token aus Paperless Admin
 #    AMAZON_EMAIL       deine Amazon-E-Mail
 #    AMAZON_PASSWORD    dein Amazon-Passwort
+#
+#  Browser-Login (Amazon, IKEA mit 2FA):
+#    http://<server-ip>:6080/vnc.html → einmalig einloggen
+#    Session bleibt dauerhaft erhalten
 # ═══════════════════════════════════════════════════════════════════
 
 services:
 
   # ─────────────────────────────────────────────────────────────────
-  # Chrome Desktop – echter Browser mit noVNC Web-UI
-  #   Einmalig: http://<server-ip>:6080/vnc.html → Amazon einloggen
-  #   Danach läuft alles automatisch
+  # paperflow-chrome – echter Browser mit noVNC Web-UI + CDP
+  #   noVNC:  http://<server-ip>:6080/vnc.html  (einmalig für Login)
+  #   CDP:    intern auf port 9222 (paperflow verbindet sich)
   # ─────────────────────────────────────────────────────────────────
-  chrome-desktop:
-    build:
-      context: ./chrome-desktop
-      dockerfile: Dockerfile
-    container_name: chrome-desktop
+  paperflow-chrome:
+    image: ghcr.io/caps3n/paperflow-chrome:latest
+    container_name: paperflow-chrome
     restart: unless-stopped
     ports:
-      - "6080:6080"       # noVNC Web-UI (einmalig für Login)
+      - "6080:6080"       # noVNC Web-UI
     volumes:
       - chrome_data:/chrome-data    # Chrome-Profil + Cookies persistent
     shm_size: "1gb"
@@ -37,29 +39,28 @@ services:
       - paperflow
 
   # ─────────────────────────────────────────────────────────────────
-  # Invoice Fetcher
+  # paperflow – Invoice Fetcher + Web-UI
   #   Web-UI: http://<server-ip>:8085
   # ─────────────────────────────────────────────────────────────────
-  invoice-fetcher:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: invoice-fetcher
+  paperflow:
+    image: ghcr.io/caps3n/paperflow:latest
+    container_name: paperflow
     restart: unless-stopped
     depends_on:
-      - chrome-desktop
+      - paperflow-chrome
     ports:
       - "8085:8080"       # Web-UI
     volumes:
       - paperflow_data:/app/data             # SQLite-DB + Logs + Einstellungen
       - paperflow_downloads:/app/downloads   # Temporäre PDFs
+      - paperflow_config:/app/config         # Konfiguration
       - paperflow_providers:/app/providers_custom  # Eigene Provider
     shm_size: "512mb"
     networks:
       - paperflow
     environment:
       # Chrome CDP (internes Netzwerk – nicht ändern)
-      - CHROME_CDP_URL=http://chrome-desktop:9222
+      - CHROME_CDP_URL=http://paperflow-chrome:9222
 
       # Paperless-NGX
       - PAPERLESS_URL=${PAPERLESS_URL:-http://192.168.178.37:8777}
@@ -82,6 +83,7 @@ volumes:
   chrome_data:
   paperflow_data:
   paperflow_downloads:
+  paperflow_config:
   paperflow_providers:
 
 networks:

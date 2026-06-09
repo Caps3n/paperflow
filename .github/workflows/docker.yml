@@ -25,7 +25,7 @@ jobs:
       - name: Lowercase repo name
         run: echo "REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
-      - name: Build and push
+      - name: Build and push paperflow
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -33,3 +33,31 @@ jobs:
           tags: |
             ghcr.io/${{ env.REPO }}:latest
             ghcr.io/${{ env.REPO }}:${{ github.ref_name }}
+
+  build-chrome:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase repo name
+        run: echo "REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Build and push paperflow-chrome
+        uses: docker/build-push-action@v5
+        with:
+          context: ./chrome-desktop
+          push: true
+          tags: |
+            ghcr.io/${{ env.REPO }}-chrome:latest
+            ghcr.io/${{ env.REPO }}-chrome:${{ github.ref_name }}
