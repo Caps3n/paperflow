@@ -12,17 +12,21 @@ Features:
 
 from __future__ import annotations
 
+import ast
+import base64
 import logging
 import os
 import re
+import secrets
 import threading
 from datetime import datetime
 from pathlib import Path
 
 import yaml
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app import database, otp_state, state
 from app.version import __version__
@@ -48,6 +52,60 @@ for _src, _dst in [(_ENV_LEGACY, ENV_PATH), (_CONFIG_LEGACY, CONFIG_PATH)]:
         logger.info("Migriert: %s → %s", _src, _dst)
 
 app = FastAPI(title="Invoice Fetcher", docs_url=None, redoc_url=None)
+
+
+# ── Basic Auth Middleware ──────────────────────────────────────────────────────
+
+class _BasicAuthMiddleware(BaseHTTPMiddleware):
+    """Schützt alle Routen mit HTTP Basic Auth.
+    Nur aktiv wenn UI_PASSWORD gesetzt ist.
+    Der /api/amazon/cookies-raw Endpunkt ist ausgenommen (wird vom Browser injiziert).
+    """
+
+    _EXCLUDED = {"/api/amazon/cookies-raw"}
+
+    async def dispatch(self, request: Request, call_next):
+        ui_pass = os.environ.get("UI_PASSWORD", "").strip()
+        if not ui_pass:
+            # Kein Passwort gesetzt → Auth deaktiviert (Abwärtskompatibilität)
+            return await call_next(request)
+
+        if request.url.path in self._EXCLUDED:
+            return await call_next(request)
+
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Basic "):
+            return Response(
+                "Authentifizierung erforderlich",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Invoice Fetcher"'},
+            )
+
+        try:
+            decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+            username, _, password = decoded.partition(":")
+        except Exception:
+            return Response(
+                "Ungültige Authentifizierung",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Invoice Fetcher"'},
+            )
+
+        ui_user = os.environ.get("UI_USER", "admin").strip()
+        user_ok = secrets.compare_digest(username.encode(), ui_user.encode())
+        pass_ok = secrets.compare_digest(password.encode(), ui_pass.encode())
+        if not user_ok or not pass_ok:
+            return Response(
+                "Falsche Zugangsdaten",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Invoice Fetcher"'},
+            )
+
+        return await call_next(request)
+
+
+app.add_middleware(_BasicAuthMiddleware)
+
 
 # ── Hintergrund-Job-State ──────────────────────────────────────────────────────
 _run_lock = threading.Lock()
@@ -144,6 +202,19 @@ async def trigger_run(body: RunRequest = RunRequest()):
 
 # Globale Einstellungen (nur Paperless + Scheduler)
 ENV_FIELDS = [
+    {
+        "key": "UI_USER",
+        "label": "Benutzername",
+        "type": "text",
+        "group": "Sicherheit",
+        "placeholder": "admin",
+    },
+    {
+        "key": "UI_PASSWORD",
+        "label": "Passwort (leer = kein Login erforderlich)",
+        "type": "password",
+        "group": "Sicherheit",
+    },
     {
         "key": "PAPERLESS_URL",
         "label": "Paperless URL",
@@ -379,6 +450,12 @@ async def upload_provider(file: UploadFile = File(...)):
 
     content = await file.read()
     text = content.decode("utf-8", errors="replace")
+
+    # Syntax-Check: Ungültiges Python wird sofort abgelehnt
+    try:
+        ast.parse(text)
+    except SyntaxError as e:
+        raise HTTPException(400, f"Syntax-Fehler in Zeile {e.lineno}: {e.msg}")
 
     # Basis-Validierung: Muss BaseProvider importieren und fetch_invoices haben
     if "BaseProvider" not in text:

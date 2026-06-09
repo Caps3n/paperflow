@@ -6,7 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [1.0.0] - 2026-06-07 — Stable Release
+## [1.0.0] - 2026-06-08 — Stable Release
+
+### Security
+- **HTTP Basic Auth** — web UI and all API endpoints are now protected when `UI_PASSWORD` is set; leave empty to disable (backwards-compatible)
+- **Configurable credentials** — `UI_USER` (default: `admin`) and `UI_PASSWORD` can be set in Settings → Sicherheit
+- **Provider syntax check** — uploaded custom provider `.py` files are now validated with `ast.parse()` before saving; broken files are rejected immediately
+- `cookies-raw` endpoint excluded from auth (called from external browser context for Amazon cookie injection)
 
 ### Added
 - **Product title extraction** — Paperless title shows the actual Amazon product name

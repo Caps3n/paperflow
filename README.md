@@ -105,6 +105,30 @@ On first run, open the Chrome browser at **http://localhost:6080** (noVNC), log 
 
 ---
 
+## 🔒 Security
+
+By default, the web UI is accessible without authentication. To enable login protection:
+
+```env
+UI_USER=admin          # optional, defaults to "admin"
+UI_PASSWORD=yourpassword
+```
+
+Or set it directly in the **Settings → Sicherheit** section of the web UI.
+
+> **Note:** paperflow runs HTTP only. For external access, place it behind a reverse proxy with TLS:
+>
+> ```nginx
+> # nginx example
+> location / {
+>     proxy_pass http://localhost:8085;
+> }
+> ```
+>
+> [Caddy](https://caddyserver.com/) is the easiest option — it handles HTTPS automatically.
+
+---
+
 ## 🏗️ Architecture
 
 ```
