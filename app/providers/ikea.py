@@ -327,10 +327,24 @@ class IkeaProvider(BaseProvider):
                     download.save_as(str(out_path))
 
                     # CDP-Modus: Browser läuft in separatem Container →
-                    # save_as() kann leer sein. Fallback: direkt via requests + Cookies.
-                    if not out_path.exists() or out_path.stat().st_size == 0:
+                    # save_as() liefert manchmal leere Datei oder HTML-Fehlerseite statt PDF.
+                    # Prüfung: Datei muss existieren UND mit PDF-Magic-Bytes (%PDF) beginnen.
+                    def _is_valid_pdf(p: Path) -> bool:
+                        try:
+                            return (
+                                p.exists()
+                                and p.stat().st_size > 500
+                                and p.read_bytes()[:4] == b"%PDF"
+                            )
+                        except Exception:
+                            return False
+
+                    if not _is_valid_pdf(out_path):
+                        size = out_path.stat().st_size if out_path.exists() else 0
                         logger.info(
-                            "Datei leer – versuche Direkt-Download: %s", download.url
+                            "Kein gültiges PDF (%d bytes) – versuche Direkt-Download: %s",
+                            size,
+                            download.url,
                         )
                         try:
                             cookies = {
@@ -342,16 +356,21 @@ class IkeaProvider(BaseProvider):
                                 timeout=30,
                                 headers={"User-Agent": "Mozilla/5.0"},
                             )
-                            if resp.ok and len(resp.content) > 100:
-                                out_path.write_bytes(resp.content)
+                            content = resp.content
+                            if (
+                                resp.ok
+                                and len(content) > 500
+                                and content[:4] == b"%PDF"
+                            ):
+                                out_path.write_bytes(content)
                                 logger.info(
-                                    "Direkt-Download OK: %d bytes", len(resp.content)
+                                    "Direkt-Download OK: %d bytes", len(content)
                                 )
                             else:
                                 logger.warning(
-                                    "Direkt-Download leer/fehlgeschlagen: %s %d",
+                                    "Direkt-Download kein PDF: status=%s size=%d",
                                     resp.status_code,
-                                    len(resp.content),
+                                    len(content),
                                 )
                                 return None
                         except Exception as de:
