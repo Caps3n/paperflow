@@ -13,4 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
 
+# Custom-Provider-Verzeichnis sicherstellen (auch ohne Volume-Mount vorhanden)
+RUN mkdir -p /app/providers_custom
+
 CMD ["python", "-m", "app.main"]

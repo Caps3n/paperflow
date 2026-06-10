@@ -59,13 +59,24 @@ def init_db() -> None:
 
 
 def is_processed(provider: str, invoice_id: str) -> bool:
-    """Gibt True zurück wenn die Rechnung bereits erfolgreich hochgeladen wurde."""
+    """True wenn die Rechnung bereits hochgeladen ODER dauerhaft kein PDF verfügbar ist.
+
+    Dauerhaft übersprungen werden auch Einträge mit error_type='no_pdf' –
+    z.B. ältere IKEA-Bestellungen ohne Kassenbon-Button.
+    """
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT status FROM invoices WHERE provider=? AND invoice_id=?",
+            "SELECT status, error_type FROM invoices WHERE provider=? AND invoice_id=?",
             (provider, invoice_id),
         ).fetchone()
-    return row is not None and row["status"] == "uploaded"
+    if row is None:
+        return False
+    if row["status"] == "uploaded":
+        return True
+    # Permanente Fehler (kein PDF verfügbar) → nicht erneut versuchen
+    if row["status"] == "failed" and row["error_type"] == "no_pdf":
+        return True
+    return False
 
 
 def mark_pending(provider: str, invoice_id: str, filename: str) -> None:

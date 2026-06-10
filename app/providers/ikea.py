@@ -204,7 +204,20 @@ class IkeaProvider(BaseProvider):
                     )
                 )
             else:
-                logger.warning("Kein PDF für %s", order["id"])
+                logger.warning(
+                    "Kein PDF für %s – wird als 'no_pdf' markiert (wird nicht erneut versucht)",
+                    order["id"],
+                )
+                # In DB eintragen damit der Scan beim nächsten Lauf übersprungen wird
+                database.mark_pending(
+                    self.provider_name, invoice_id, f"ikea_{order['id']}.pdf"
+                )
+                database.mark_failed(
+                    self.provider_name,
+                    invoice_id,
+                    "Kein 'Kassenbon & Rechnung' Button gefunden",
+                    error_type="no_pdf",
+                )
 
         logger.info("IKEA: %d Rechnungen gefunden", len(invoices))
         return invoices
