@@ -384,6 +384,31 @@ class KlarnaProvider(BaseProvider):
                 "Aktueller URL: %s",
                 MANAGE_PAYMENTS_URL, page.url
             )
+            # DEBUG: HTML-Ausschnitt loggen damit wir die Seitenstruktur sehen
+            try:
+                html_debug = page.content()
+                # Ersten 3000 Zeichen des Body-Inhalts loggen
+                body_start = html_debug.find("<body")
+                snippet = html_debug[body_start:body_start + 3000] if body_start >= 0 else html_debug[:3000]
+                logger.info("DEBUG Klarna HTML-Ausschnitt:\n%s", snippet)
+                # Alle Links auf der Seite loggen
+                all_links = page.evaluate("""
+                    () => [...document.querySelectorAll('a[href]')]
+                        .map(a => a.getAttribute('href'))
+                        .filter(h => h && h.length > 1)
+                        .slice(0, 30)
+                """)
+                logger.info("DEBUG alle Links auf Seite: %s", all_links)
+                # Alle Buttons
+                all_btns = page.evaluate("""
+                    () => [...document.querySelectorAll('button')]
+                        .map(b => b.textContent.trim().slice(0, 50))
+                        .filter(t => t.length > 0)
+                        .slice(0, 20)
+                """)
+                logger.info("DEBUG alle Buttons: %s", all_btns)
+            except Exception as de:
+                logger.debug("DEBUG-Dump fehlgeschlagen: %s", de)
         else:
             logger.info("Gesamt %d Transaktionen gefunden", len(transactions))
 
