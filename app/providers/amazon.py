@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
-from playwright_stealth import stealth_sync
+from playwright_stealth import stealth as stealth_sync
 
 from app import database, otp_state
 from app.providers import BaseProvider, Invoice
