@@ -117,11 +117,18 @@ class IkeaProvider(BaseProvider):
                 logger.error("CDP-Verbindung fehlgeschlagen: %s", e)
                 return []
 
+            _MAC_UA = (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            )
             context = (
                 browser.contexts[0]
                 if browser.contexts
                 else browser.new_context(
-                    locale="de-DE", viewport={"width": 1280, "height": 900}
+                    locale="de-DE",
+                    viewport={"width": 1280, "height": 900},
+                    user_agent=_MAC_UA,
                 )
             )
             page = context.new_page()

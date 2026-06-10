@@ -51,25 +51,23 @@ sleep 1
 # 5. Chrome mit Remote-Debugging
 mkdir -p ${CHROME_PROFILE}
 
+# User-Agent: echter Mac Mini M4 mit Chrome – täuscht Klarna & Co.
+MAC_UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
 chromium-browser \
   --no-sandbox \
   --disable-dev-shm-usage \
   --remote-debugging-port=${CDP_PORT} \
   --remote-debugging-address=0.0.0.0 \
   --user-data-dir=${CHROME_PROFILE} \
+  --user-agent="${MAC_UA}" \
+  --disable-blink-features=AutomationControlled \
+  --lang=de-DE,de \
+  --accept-lang=de-DE,de \
   --no-first-run \
   --disable-default-apps \
-  --disable-extensions-except= \
-  --disable-background-networking \
-  --disable-client-side-phishing-detection \
-  --disable-default-apps \
-  --disable-hang-monitor \
   --disable-popup-blocking \
   --disable-prompt-on-repost \
-  --disable-sync \
-  --disable-translate \
-  --metrics-recording-only \
-  --safebrowsing-disable-auto-update \
   --password-store=basic \
   --use-mock-keychain \
   --window-size=1280,900 \
