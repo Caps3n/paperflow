@@ -1,10 +1,11 @@
-FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Im CDP-Modus (CHROME_CDP_URL gesetzt) wird kein lokaler Browser benötigt.
-# Xvfb nur als Fallback falls kein chrome-desktop Container läuft.
-RUN apt-get update && apt-get install -y --no-install-recommends xvfb \
+# Minimale System-Libs für Playwright CDP-Modus (kein lokaler Browser nötig)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
