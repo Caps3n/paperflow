@@ -387,7 +387,9 @@ def _list_provider_files() -> list[str]:
         for p in (Path(__file__).parent / "providers").glob("*.py")
         if p.stem not in ("__init__",)
     ]
-    custom = [p.stem for p in PROVIDERS_DIR.glob("*.py")] if PROVIDERS_DIR.exists() else []
+    custom = (
+        [p.stem for p in PROVIDERS_DIR.glob("*.py")] if PROVIDERS_DIR.exists() else []
+    )
     return built_in + custom
 
 

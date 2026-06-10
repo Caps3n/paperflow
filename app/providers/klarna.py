@@ -48,10 +48,22 @@ _CDP_URL = os.environ.get("CHROME_CDP_URL", "").strip()
 
 # Deutsche Monatsnamen → Nummer
 _MONTHS_DE: dict[str, int] = {
-    "jan": 1, "feb": 2, "mär": 3, "mar": 3,
-    "apr": 4, "mai": 5, "may": 5, "jun": 6,
-    "jul": 7, "aug": 8, "sep": 9, "okt": 10,
-    "oct": 10, "nov": 11, "dez": 12, "dec": 12,
+    "jan": 1,
+    "feb": 2,
+    "mär": 3,
+    "mar": 3,
+    "apr": 4,
+    "mai": 5,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "okt": 10,
+    "oct": 10,
+    "nov": 11,
+    "dez": 12,
+    "dec": 12,
 }
 
 
@@ -62,9 +74,14 @@ def _sleep(min_s: float = 1.0, max_s: float = 2.5) -> None:
 def _is_logged_in_url(url: str) -> bool:
     """True wenn der Browser eingeloggt ist (kein Login/Auth-Redirect)."""
     return not any(
-        p in url for p in [
-            "login.klarna.com", "auth.klarna.com",
-            "/login", "/signin", "/authorize", "oauth",
+        p in url
+        for p in [
+            "login.klarna.com",
+            "auth.klarna.com",
+            "/login",
+            "/signin",
+            "/authorize",
+            "oauth",
         ]
     )
 
@@ -150,7 +167,9 @@ class KlarnaProvider(BaseProvider):
         with sync_playwright() as p:
             try:
                 browser = p.chromium.connect_over_cdp(cdp_url)
-                logger.info("Chrome CDP verbunden: %d Context(s)", len(browser.contexts))
+                logger.info(
+                    "Chrome CDP verbunden: %d Context(s)", len(browser.contexts)
+                )
             except Exception as exc:
                 logger.error("CDP-Verbindung fehlgeschlagen: %s", exc)
                 return []
@@ -210,6 +229,7 @@ class KlarnaProvider(BaseProvider):
             years_filter = {int(y) for y in yf.split(",") if y.strip().isdigit()}
         elif self.scan_from_year:
             import datetime
+
             current_year = datetime.date.today().year
             years_filter = set(range(self.scan_from_year, current_year + 1))
 
@@ -220,7 +240,8 @@ class KlarnaProvider(BaseProvider):
             if years_filter and txn.get("year") and txn["year"] not in years_filter:
                 logger.info(
                     "Überspringe %s (Jahr %s nicht im Filter)",
-                    txn["id"], txn.get("year")
+                    txn["id"],
+                    txn.get("year"),
                 )
                 continue
 
@@ -353,11 +374,14 @@ class KlarnaProvider(BaseProvider):
             try:
                 html = page.content()
                 # Suche nach krn:ccs:transaction:{UUID} Mustern (encoded oder plain)
-                uuids = set(re.findall(
-                    r"krn(?:%3A|:)ccs(?:%3A|:)transaction(?:%3A|:)"
-                    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
-                    html, re.IGNORECASE
-                ))
+                uuids = set(
+                    re.findall(
+                        r"krn(?:%3A|:)ccs(?:%3A|:)transaction(?:%3A|:)"
+                        r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+                        html,
+                        re.IGNORECASE,
+                    )
+                )
                 logger.info("Strategie 3: %d UUIDs in HTML gefunden", len(uuids))
                 for uuid in uuids:
                     if uuid not in seen:
@@ -366,14 +390,16 @@ class KlarnaProvider(BaseProvider):
                             f"{MANAGE_PAYMENTS_URL}/transactions/internal/"
                             f"krn%3Accs%3Atransaction%3A{uuid}/details"
                         )
-                        transactions.append({
-                            "id": uuid,
-                            "url": txn_url,
-                            "merchant": "Klarna",
-                            "year": None,
-                            "month": None,
-                            "day": None,
-                        })
+                        transactions.append(
+                            {
+                                "id": uuid,
+                                "url": txn_url,
+                                "merchant": "Klarna",
+                                "year": None,
+                                "month": None,
+                                "day": None,
+                            }
+                        )
             except Exception as exc:
                 logger.warning("HTML-Suche fehlgeschlagen: %s", exc)
 
@@ -382,14 +408,19 @@ class KlarnaProvider(BaseProvider):
                 "Keine Transaktionen gefunden auf %s\n"
                 "Prüfe ob der Browser eingeloggt ist und die Seite Transaktionen enthält.\n"
                 "Aktueller URL: %s",
-                MANAGE_PAYMENTS_URL, page.url
+                MANAGE_PAYMENTS_URL,
+                page.url,
             )
             # DEBUG: HTML-Ausschnitt loggen damit wir die Seitenstruktur sehen
             try:
                 html_debug = page.content()
                 # Ersten 3000 Zeichen des Body-Inhalts loggen
                 body_start = html_debug.find("<body")
-                snippet = html_debug[body_start:body_start + 3000] if body_start >= 0 else html_debug[:3000]
+                snippet = (
+                    html_debug[body_start : body_start + 3000]
+                    if body_start >= 0
+                    else html_debug[:3000]
+                )
                 logger.info("DEBUG Klarna HTML-Ausschnitt:\n%s", snippet)
                 # Alle Links auf der Seite loggen
                 all_links = page.evaluate("""
@@ -423,7 +454,8 @@ class KlarnaProvider(BaseProvider):
         m = re.search(
             r"krn(?:%3A|:)ccs(?:%3A|:)transaction(?:%3A|:)"
             r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
-            href, re.IGNORECASE
+            href,
+            re.IGNORECASE,
         )
         if not m:
             return None
@@ -564,9 +596,7 @@ class KlarnaProvider(BaseProvider):
                 continue
 
         if not auszug_btn:
-            logger.warning(
-                "'Auszug herunterladen' nicht im Dialog für %s", txn["id"]
-            )
+            logger.warning("'Auszug herunterladen' nicht im Dialog für %s", txn["id"])
             # Dialog schließen
             try:
                 page.keyboard.press("Escape")
@@ -593,21 +623,22 @@ class KlarnaProvider(BaseProvider):
                 txn["year"], txn["month"], txn["day"] = date_result
                 logger.info(
                     "Datum für %s: %02d.%02d.%d",
-                    txn["id"][:8], txn["day"], txn["month"], txn["year"]
+                    txn["id"][:8],
+                    txn["day"],
+                    txn["month"],
+                    txn["year"],
                 )
 
             # Ausstehend-Check: "Zahlung in Bearbeitung" → skip
             if "zahlung in bearbeitung" in text.lower():
                 logger.info(
                     "Transaktion %s noch in Bearbeitung – Auszug eventuell unvollständig",
-                    txn["id"][:8]
+                    txn["id"][:8],
                 )
         except Exception as exc:
             logger.debug("Anreicherung fehlgeschlagen: %s", exc)
 
-    def _do_download(
-        self, page: Page, btn, out_path: Path, txn_id: str
-    ) -> Path | None:
+    def _do_download(self, page: Page, btn, out_path: Path, txn_id: str) -> Path | None:
         """Klickt den Download-Button und speichert das PDF."""
         try:
             with page.expect_download(timeout=30_000) as dl_info:
@@ -656,7 +687,8 @@ class KlarnaProvider(BaseProvider):
                         else:
                             logger.warning(
                                 "HTTP-Fallback kein PDF: status=%s size=%d",
-                                resp.status_code, len(content),
+                                resp.status_code,
+                                len(content),
                             )
                     except Exception as de:
                         logger.warning("HTTP-Fallback Fehler: %s", de)
