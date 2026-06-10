@@ -382,6 +382,50 @@ class KlarnaProvider(BaseProvider):
             except Exception as exc:
                 logger.warning("JS-Strategie fehlgeschlagen: %s", exc)
 
+        # Strategie 2c: React-Props direkt auslesen (ohne Button-Klicks)
+        # Klarna rendert Transaktionen als <button> mit onClick → React speichert
+        # die Ziel-URL in __reactProps / __reactFiber des DOM-Knotens.
+        if not transactions:
+            logger.info("Strategie 2c: React-Props für Transaktions-URLs")
+            try:
+                urls = page.evaluate("""
+                    () => {
+                        const found = new Set();
+                        // Alle Buttons durchsuchen
+                        document.querySelectorAll('button').forEach(el => {
+                            const keys = Object.keys(el).filter(k =>
+                                k.startsWith('__reactFiber') ||
+                                k.startsWith('__reactProps') ||
+                                k.startsWith('__reactEventHandlers')
+                            );
+                            for (const key of keys) {
+                                try {
+                                    const str = JSON.stringify(el[key]);
+                                    if (!str) continue;
+                                    // Suche nach Transaction-URLs in React Props
+                                    const re = /\\/manage-payments\\/transactions\\/internal\\/[^"\\\\,}\\]]+/g;
+                                    const matches = str.match(re);
+                                    if (matches) matches.forEach(m => found.add(m));
+                                    // Auch krn:ccs:transaction:{UUID} Muster
+                                    const re2 = /krn(?:%3A|:)ccs(?:%3A|:)transaction(?:%3A|:)[0-9a-f-]{36}/gi;
+                                    const m2 = str.match(re2);
+                                    if (m2) m2.forEach(m => found.add(m));
+                                } catch (_) {}
+                            }
+                        });
+                        return [...found];
+                    }
+                """)
+                logger.info("Strategie 2c: %d React-Props-URLs gefunden", len(urls))
+                for raw in urls:
+                    txn = self._parse_txn_from_href(raw)
+                    if txn and txn["id"] not in seen:
+                        seen.add(txn["id"])
+                        txn["merchant"] = "Klarna"
+                        transactions.append(txn)
+            except Exception as exc:
+                logger.warning("Strategie 2c fehlgeschlagen: %s", exc)
+
         # Strategie 2b: React Router pushState-Interceptor
         # Transaktionen sind als <button> gerendert mit onClick → history.pushState
         # Wir patchen pushState, klicken alle €-Buttons und fangen die URLs ab.
