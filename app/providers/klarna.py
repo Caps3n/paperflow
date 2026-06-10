@@ -384,7 +384,9 @@ class KlarnaProvider(BaseProvider):
 
         # Strategie 2b: React Router pushState-Interceptor
         # Transaktionen sind als <button> gerendert mit onClick → history.pushState
-        # Wir patchen pushState, klicken alle €-Buttons und fangen die URLs ab
+        # Wir patchen pushState, klicken alle €-Buttons und fangen die URLs ab.
+        # WICHTIG: Button-Handles werden nach go_back() ungültig (React re-rendert),
+        # daher werden Buttons bei jeder Iteration neu abgefragt.
         if not transactions:
             logger.info("Strategie 2b: pushState-Interceptor für Transaction-Buttons")
             try:
@@ -392,6 +394,7 @@ class KlarnaProvider(BaseProvider):
                 page.evaluate("""
                     () => {
                         window.__klarna_captured_urls = [];
+                        window.__klarna_interceptor_active = true;
                         const orig = history.pushState.bind(history);
                         history.pushState = (s, t, url) => {
                             if (url && url.includes('transactions/internal')) {
@@ -401,18 +404,31 @@ class KlarnaProvider(BaseProvider):
                         };
                     }
                 """)
-                # Alle Buttons mit € klicken (das sind Transaktionszeilen)
-                # Danach sofort zurücknavigieren damit die Liste erhalten bleibt
-                euro_buttons = page.query_selector_all("button:has-text('€')")
-                logger.info("Strategie 2b: %d €-Buttons gefunden", len(euro_buttons))
-                for btn in euro_buttons[:50]:  # max 50 Transaktionen
+                # Anzahl der Buttons einmalig bestimmen
+                button_count = len(page.query_selector_all("button:has-text('€')"))
+                logger.info("Strategie 2b: %d €-Buttons gefunden", button_count)
+
+                for i in range(min(button_count, 100)):
                     try:
-                        btn.click()
+                        # Buttons bei jeder Iteration neu abfragen – Handles werden
+                        # nach go_back() ungültig da React den DOM neu aufbaut
+                        btns = page.query_selector_all("button:has-text('€')")
+                        if i >= len(btns):
+                            break
+                        btns[i].click()
                         _sleep(0.3, 0.6)
                         page.go_back()
+                        # Warten bis React die Liste neu gerendert hat
+                        try:
+                            page.wait_for_selector(
+                                "button:has-text('€')", timeout=5_000
+                            )
+                        except Exception:
+                            pass
                         _sleep(0.5, 1.0)
                     except Exception:
                         continue
+
                 # Abgefangene URLs auslesen
                 captured = page.evaluate("() => window.__klarna_captured_urls || []")
                 logger.info("Strategie 2b: %d URLs abgefangen", len(captured))
@@ -575,6 +591,11 @@ class KlarnaProvider(BaseProvider):
         if txn.get("year") is None:
             self._enrich_txn_from_detail(page, txn)
 
+        # Transaktion noch in Bearbeitung → kein Auszug verfügbar
+        if txn.get("pending"):
+            logger.info("Überspringe ausstehende Transaktion %s", txn["id"][:8])
+            return None
+
         out_path = self.download_dir / f"klarna_{txn['id']}.pdf"
 
         # ••• Button suchen
@@ -686,12 +707,13 @@ class KlarnaProvider(BaseProvider):
                     txn["year"],
                 )
 
-            # Ausstehend-Check: "Zahlung in Bearbeitung" → skip
+            # Ausstehend-Check: "Zahlung in Bearbeitung" → kein PDF verfügbar
             if "zahlung in bearbeitung" in text.lower():
                 logger.info(
-                    "Transaktion %s noch in Bearbeitung – Auszug eventuell unvollständig",
+                    "Transaktion %s noch in Bearbeitung – Auszug nicht verfügbar, überspringe",
                     txn["id"][:8],
                 )
+                txn["pending"] = True
         except Exception as exc:
             logger.debug("Anreicherung fehlgeschlagen: %s", exc)
 

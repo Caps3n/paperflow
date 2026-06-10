@@ -41,7 +41,7 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Europe/Berlin
-      - CHROME_CLI=--remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --no-sandbox
+      - CHROME_CLI=--remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --no-sandbox --disable-blink-features=AutomationControlled --window-size=1920,1080 --lang=de-DE --accept-lang=de-DE,de --user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36
 
   # ─────────────────────────────────────────────────────────────────
   # paperflow – Invoice Fetcher + Web-UI

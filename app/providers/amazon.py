@@ -190,6 +190,9 @@ class AmazonProvider(BaseProvider):
                 logger.info("Neuer Browser-Context erstellt")
 
             page = context.new_page()
+            # Viewport explizit setzen – verhindert dass Amazon die mobile Website zeigt
+            # (Chrome-Container kann kleines Standard-Fenster haben)
+            page.set_viewport_size({"width": 1280, "height": 900})
 
             try:
                 if not self._ensure_logged_in(page):
