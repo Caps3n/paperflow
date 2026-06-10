@@ -293,7 +293,21 @@ class KlarnaProvider(BaseProvider):
             page.wait_for_load_state("networkidle", timeout=20_000)
         except Exception:
             pass
-        _sleep(2, 4)
+
+        # React SPA rendert Transaktionen nach networkidle → explizit warten
+        # Warte bis entweder ein Transaction-Link ODER ein Button mit € erscheint
+        for _wait_sel in [
+            "a[href*='transactions/internal']",
+            "button:has-text('€')",
+            "button:has-text('Bezahlt')",
+        ]:
+            try:
+                page.wait_for_selector(_wait_sel, timeout=20_000)
+                logger.info("Klarna Seite geladen (gefunden: %s)", _wait_sel)
+                break
+            except Exception:
+                continue
+        _sleep(2, 3)
 
         # "Mehr laden" solange klicken bis Button weg
         for _ in range(20):
@@ -367,6 +381,49 @@ class KlarnaProvider(BaseProvider):
                         transactions.append(txn)
             except Exception as exc:
                 logger.warning("JS-Strategie fehlgeschlagen: %s", exc)
+
+        # Strategie 2b: React Router pushState-Interceptor
+        # Transaktionen sind als <button> gerendert mit onClick → history.pushState
+        # Wir patchen pushState, klicken alle €-Buttons und fangen die URLs ab
+        if not transactions:
+            logger.info("Strategie 2b: pushState-Interceptor für Transaction-Buttons")
+            try:
+                # pushState patchen
+                page.evaluate("""
+                    () => {
+                        window.__klarna_captured_urls = [];
+                        const orig = history.pushState.bind(history);
+                        history.pushState = (s, t, url) => {
+                            if (url && url.includes('transactions/internal')) {
+                                window.__klarna_captured_urls.push(url);
+                            }
+                            orig(s, t, url);
+                        };
+                    }
+                """)
+                # Alle Buttons mit € klicken (das sind Transaktionszeilen)
+                # Danach sofort zurücknavigieren damit die Liste erhalten bleibt
+                euro_buttons = page.query_selector_all("button:has-text('€')")
+                logger.info("Strategie 2b: %d €-Buttons gefunden", len(euro_buttons))
+                for btn in euro_buttons[:50]:  # max 50 Transaktionen
+                    try:
+                        btn.click()
+                        _sleep(0.3, 0.6)
+                        page.go_back()
+                        _sleep(0.5, 1.0)
+                    except Exception:
+                        continue
+                # Abgefangene URLs auslesen
+                captured = page.evaluate("() => window.__klarna_captured_urls || []")
+                logger.info("Strategie 2b: %d URLs abgefangen", len(captured))
+                for url in captured:
+                    txn = self._parse_txn_from_href(url)
+                    if txn and txn["id"] not in seen:
+                        seen.add(txn["id"])
+                        txn["merchant"] = "Klarna"
+                        transactions.append(txn)
+            except Exception as exc:
+                logger.warning("pushState-Interceptor fehlgeschlagen: %s", exc)
 
         # Strategie 3: HTML-Source nach Transaction-UUIDs durchsuchen
         if not transactions:
