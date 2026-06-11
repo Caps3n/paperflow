@@ -94,17 +94,20 @@ def _parse_klarna_date(text: str) -> tuple[int, int, int] | None:
     """
     import datetime
 
-    # "D. Monatsname[,] [YYYY]" – z.B. "5. Juni, 06:25" (ohne Jahr → aktuelles Jahr)
+    # "D. Monatsname [YYYY]" – z.B. "5. Juni 2026" oder "5. Juni, 06:25" (ohne Jahr)
+    # Jahr NUR direkt hinter dem Monatsnamen suchen (max. 10 Zeichen Abstand),
+    # damit Klarna-Footer-Jahre wie "2005" nicht fälschlich aufgegriffen werden.
     m = re.search(
-        r"(\d{1,2})\.\s*([A-Za-zäöüÄÖÜ]{3,})(?:[.,]|\s|$)", text, re.IGNORECASE
+        r"(\d{1,2})\.\s*([A-Za-zäöüÄÖÜ]{3,})\.?\s*(?:(20\d{2})|(?:[.,]|\s|$))",
+        text,
+        re.IGNORECASE,
     )
     if m:
         day = int(m.group(1))
         mon_key = m.group(2).lower()[:3].replace("ä", "a")
         month = _MONTHS_DE.get(mon_key)
-        # Jahr: suche vierstellige Zahl in Text; sonst aktuelles Jahr
-        yr_m = re.search(r"\b(20\d{2})\b", text)
-        year = int(yr_m.group(1)) if yr_m else datetime.date.today().year
+        # Gruppe 3 enthält Jahr nur wenn es direkt hinter Monatsname steht
+        year = int(m.group(3)) if m.group(3) else datetime.date.today().year
         if month:
             return year, month, day
 
