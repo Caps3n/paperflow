@@ -762,70 +762,118 @@ class KlarnaProvider(BaseProvider):
             logger.debug("Anreicherung fehlgeschlagen: %s", exc)
 
     def _do_download(self, page: Page, btn, out_path: Path, txn_id: str) -> Path | None:
-        """Klickt den Download-Button und speichert das PDF."""
-        try:
-            with page.expect_download(timeout=30_000) as dl_info:
-                btn.click()
-            download = dl_info.value
+        """Klickt den Download-Button und speichert das PDF.
 
-            pdf_bytes: bytes | None = None
+        Klarna öffnet den Auszug typischerweise in einem neuen Tab (kein Browser-
+        Download-Event). Daher: erst auf neuen Tab warten, Fallback auf
+        expect_download().
+        """
 
-            if download.url.startswith("data:"):
-                # data:application/pdf;base64,JVBERi...
+        def _fetch_pdf_from_url(url: str) -> bytes | None:
+            """Lädt PDF-Bytes von einer URL, ggf. mit Browser-Cookies."""
+            if url.startswith("data:"):
                 try:
-                    _, b64 = download.url.split(",", 1)
-                    pdf_bytes = _base64.b64decode(b64)
-                    logger.info("Data-URL dekodiert: %d bytes", len(pdf_bytes))
-                except Exception as de:
-                    logger.warning("Data-URL Dekodierung fehlgeschlagen: %s", de)
-            else:
-                # HTTP-Download: save_as() versuchen
-                download.save_as(str(out_path))
-                if out_path.exists() and out_path.stat().st_size > 500:
-                    candidate = out_path.read_bytes()
-                    if candidate[:4] == b"%PDF":
-                        pdf_bytes = candidate
-                    else:
-                        logger.info(
-                            "save_as() kein PDF (%d bytes) – versuche requests",
-                            len(candidate),
-                        )
-
-                if pdf_bytes is None:
-                    # Fallback: HTTP-Download mit Browser-Cookies
-                    try:
-                        cookies = {
-                            c["name"]: c["value"] for c in page.context.cookies()
-                        }
-                        resp = _requests.get(
-                            download.url,
-                            cookies=cookies,
-                            timeout=30,
-                            headers={"User-Agent": "Mozilla/5.0"},
-                        )
-                        content = resp.content
-                        if resp.ok and len(content) > 500 and content[:4] == b"%PDF":
-                            pdf_bytes = content
-                            logger.info("HTTP-Fallback OK: %d bytes", len(content))
-                        else:
-                            logger.warning(
-                                "HTTP-Fallback kein PDF: status=%s size=%d",
-                                resp.status_code,
-                                len(content),
-                            )
-                    except Exception as de:
-                        logger.warning("HTTP-Fallback Fehler: %s", de)
-
-            if pdf_bytes is None or pdf_bytes[:4] != b"%PDF":
-                logger.warning("Kein gültiges PDF für %s", txn_id)
-                return None
-
-            out_path.write_bytes(pdf_bytes)
-            logger.info(
-                "Auszug gespeichert: %s (%d bytes)", out_path.name, len(pdf_bytes)
-            )
-            return out_path
-
-        except Exception as exc:
-            logger.warning("Download-Fehler für %s: %s", txn_id, exc)
+                    _, b64 = url.split(",", 1)
+                    data = _base64.b64decode(b64)
+                    logger.info("Data-URL dekodiert: %d bytes", len(data))
+                    return data if data[:4] == b"%PDF" else None
+                except Exception as e:
+                    logger.warning("Data-URL Dekodierung fehlgeschlagen: %s", e)
+                    return None
+            try:
+                cookies = {c["name"]: c["value"] for c in page.context.cookies()}
+                resp = _requests.get(
+                    url,
+                    cookies=cookies,
+                    timeout=30,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                content = resp.content
+                if resp.ok and len(content) > 500 and content[:4] == b"%PDF":
+                    logger.info("HTTP-Download OK: %d bytes", len(content))
+                    return content
+                logger.warning(
+                    "HTTP-Download kein PDF: status=%s size=%d",
+                    resp.status_code,
+                    len(content),
+                )
+            except Exception as e:
+                logger.warning("HTTP-Download Fehler: %s", e)
             return None
+
+        pdf_bytes: bytes | None = None
+
+        # ── Strategie A: neuer Tab (Klarna-typisch) ──────────────────────────
+        try:
+            with page.context.expect_page(timeout=8_000) as new_page_info:
+                btn.click()
+            new_page = new_page_info.value
+            try:
+                new_page.wait_for_load_state("networkidle", timeout=15_000)
+            except Exception:
+                pass
+            pdf_url = new_page.url
+            logger.info("Neuer Tab geöffnet: %s", pdf_url[:80])
+            # Manchmal ist der Tab selbst die PDF-Seite
+            if pdf_url.lower().endswith(".pdf") or "pdf" in pdf_url.lower():
+                pdf_bytes = _fetch_pdf_from_url(pdf_url)
+            if pdf_bytes is None:
+                # PDF direkt aus Tab-Inhalt lesen
+                try:
+                    raw = new_page.evaluate(
+                        "() => document.body ? document.body.innerHTML : ''"
+                    )
+                    if raw and len(raw) > 100:
+                        # blob:-URL? Über fetch() laden
+                        blob_url = new_page.evaluate(
+                            """
+                            () => {
+                                const a = document.querySelector('a[href]');
+                                return a ? a.href : null;
+                            }
+                            """
+                        )
+                        if blob_url:
+                            pdf_bytes = _fetch_pdf_from_url(blob_url)
+                except Exception:
+                    pass
+            if pdf_bytes is None:
+                pdf_bytes = _fetch_pdf_from_url(pdf_url)
+            try:
+                new_page.close()
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.info(
+                "Kein neuer Tab (Strategie A): %s – versuche expect_download", exc
+            )
+
+        # ── Strategie B: klassischer Browser-Download ─────────────────────────
+        if pdf_bytes is None:
+            try:
+                with page.expect_download(timeout=15_000) as dl_info:
+                    try:
+                        btn.click()
+                    except Exception:
+                        pass
+                download = dl_info.value
+                if download.url.startswith("data:"):
+                    pdf_bytes = _fetch_pdf_from_url(download.url)
+                else:
+                    download.save_as(str(out_path))
+                    if out_path.exists() and out_path.stat().st_size > 500:
+                        candidate = out_path.read_bytes()
+                        if candidate[:4] == b"%PDF":
+                            pdf_bytes = candidate
+                    if pdf_bytes is None:
+                        pdf_bytes = _fetch_pdf_from_url(download.url)
+            except Exception as exc:
+                logger.warning("Download-Fehler (Strategie B) für %s: %s", txn_id, exc)
+
+        if pdf_bytes is None or pdf_bytes[:4] != b"%PDF":
+            logger.warning("Kein gültiges PDF für %s", txn_id)
+            return None
+
+        out_path.write_bytes(pdf_bytes)
+        logger.info("Auszug gespeichert: %s (%d bytes)", out_path.name, len(pdf_bytes))
+        return out_path
