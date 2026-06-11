@@ -801,22 +801,30 @@ class KlarnaProvider(BaseProvider):
                 pass
             pdf_url = new_page.url
             logger.info("Neuer Tab geöffnet: %s", pdf_url[:80])
-            # blob: URL direkt über JS fetch lesen (requests kann keine blob: URLs)
-            # Wichtig: fetch muss auf der ELTERN-Seite laufen, weil der Blob dort
-            # erstellt wurde. Im neuen Tab schlägt fetch() mit "Failed to fetch" fehl.
+            # blob: URL direkt über XHR lesen (requests kann keine blob: URLs;
+            # fetch() schlägt fehl weil Klarna window.fetch überschreibt;
+            # XHR läuft auf der Eltern-Seite, wo der Blob erstellt wurde)
             if pdf_url.startswith("blob:"):
                 try:
                     b64 = page.evaluate(
                         """async (blobUrl) => {
-                        const r = await fetch(blobUrl);
-                        const ab = await r.arrayBuffer();
-                        const arr = new Uint8Array(ab);
-                        let s = '';
-                        const chunk = 8192;
-                        for (let i = 0; i < arr.length; i += chunk) {
-                            s += String.fromCharCode.apply(null, arr.subarray(i, i + chunk));
-                        }
-                        return btoa(s);
+                        return new Promise((resolve) => {
+                            const xhr = new XMLHttpRequest();
+                            xhr.open('GET', blobUrl, true);
+                            xhr.responseType = 'arraybuffer';
+                            xhr.onload = function() {
+                                const arr = new Uint8Array(this.response);
+                                let s = '';
+                                const chunk = 8192;
+                                for (let i = 0; i < arr.length; i += chunk) {
+                                    s += String.fromCharCode.apply(
+                                        null, arr.subarray(i, i + chunk));
+                                }
+                                resolve(btoa(s));
+                            };
+                            xhr.onerror = () => resolve(null);
+                            xhr.send();
+                        });
                     }""",
                         pdf_url,
                     )
