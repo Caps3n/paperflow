@@ -801,6 +801,29 @@ class KlarnaProvider(BaseProvider):
                 pass
             pdf_url = new_page.url
             logger.info("Neuer Tab geöffnet: %s", pdf_url[:80])
+            # blob: URL direkt über JS fetch lesen (requests kann keine blob: URLs)
+            if pdf_url.startswith("blob:"):
+                try:
+                    b64 = new_page.evaluate("""async () => {
+                        const r = await fetch(document.URL);
+                        const ab = await r.arrayBuffer();
+                        const arr = new Uint8Array(ab);
+                        let s = '';
+                        const chunk = 8192;
+                        for (let i = 0; i < arr.length; i += chunk) {
+                            s += String.fromCharCode.apply(null, arr.subarray(i, i + chunk));
+                        }
+                        return btoa(s);
+                    }""")
+                    if b64:
+                        candidate = _base64.b64decode(b64)
+                        if candidate[:4] == b"%PDF":
+                            pdf_bytes = candidate
+                            logger.info("Blob-URL PDF gelesen: %d bytes", len(pdf_bytes))
+                        else:
+                            logger.warning("Blob-URL kein PDF (magic: %s)", candidate[:4])
+                except Exception as e:
+                    logger.warning("Blob-URL fetch fehlgeschlagen: %s", e)
             # Manchmal ist der Tab selbst die PDF-Seite
             if pdf_url.lower().endswith(".pdf") or "pdf" in pdf_url.lower():
                 pdf_bytes = _fetch_pdf_from_url(pdf_url)

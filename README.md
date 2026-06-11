@@ -3,10 +3,14 @@
 **Automatically fetch invoices from online providers and import them into [Paperless-NGX](https://github.com/paperless-ngx/paperless-ngx).**
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Status](https://img.shields.io/badge/status-pre--release-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)
 ![Python](https://img.shields.io/badge/python-3.12-blue?logo=python)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-ffdd00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/caps3n)
+
+> **⚠️ Pre-release — work in progress**
+> paperflow is currently in active development and has not yet reached a stable public release. Expect breaking changes, incomplete features, and rough edges. Use in production at your own risk.
 
 paperflow runs as a Docker container, periodically logs into your provider accounts, downloads invoices as PDFs, and uploads them to your Paperless-NGX instance — fully automatically. A SQLite database tracks which invoices have already been processed to avoid duplicates.
 
