@@ -819,9 +819,13 @@ class KlarnaProvider(BaseProvider):
                         candidate = _base64.b64decode(b64)
                         if candidate[:4] == b"%PDF":
                             pdf_bytes = candidate
-                            logger.info("Blob-URL PDF gelesen: %d bytes", len(pdf_bytes))
+                            logger.info(
+                                "Blob-URL PDF gelesen: %d bytes", len(pdf_bytes)
+                            )
                         else:
-                            logger.warning("Blob-URL kein PDF (magic: %s)", candidate[:4])
+                            logger.warning(
+                                "Blob-URL kein PDF (magic: %s)", candidate[:4]
+                            )
                 except Exception as e:
                     logger.warning("Blob-URL fetch fehlgeschlagen: %s", e)
             # Manchmal ist der Tab selbst die PDF-Seite
