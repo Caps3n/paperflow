@@ -790,6 +790,30 @@ class KlarnaProvider(BaseProvider):
 
         pdf_bytes: bytes | None = None
 
+        # Interceptor: URL.createObjectURL überschreiben BEVOR geklickt wird,
+        # damit der Blob-Inhalt captured wird bevor revokeObjectURL ihn löscht.
+        try:
+            page.evaluate("""() => {
+                window.__pf_blobData = null;
+                if (!window.__pf_blobIntercepted) {
+                    const _orig = URL.createObjectURL.bind(URL);
+                    URL.createObjectURL = function(obj) {
+                        const url = _orig(obj);
+                        if (obj instanceof Blob || obj instanceof File) {
+                            const reader = new FileReader();
+                            reader.onload = function() {
+                                window.__pf_blobData = reader.result;
+                            };
+                            reader.readAsDataURL(obj);
+                        }
+                        return url;
+                    };
+                    window.__pf_blobIntercepted = true;
+                }
+            }""")
+        except Exception:
+            pass
+
         # ── Strategie A: neuer Tab (Klarna-typisch) ──────────────────────────
         try:
             with page.context.expect_page(timeout=8_000) as new_page_info:
@@ -801,6 +825,28 @@ class KlarnaProvider(BaseProvider):
                 pass
             pdf_url = new_page.url
             logger.info("Neuer Tab geöffnet: %s", pdf_url[:80])
+
+            # Blob via createObjectURL-Interceptor lesen (vor revokeObjectURL)
+            if pdf_url.startswith("blob:") and pdf_bytes is None:
+                try:
+                    page.wait_for_timeout(1500)  # FileReader etwas Zeit geben
+                    data_url = page.evaluate("() => window.__pf_blobData")
+                    if data_url and "," in data_url:
+                        _, b64_part = data_url.split(",", 1)
+                        candidate = _base64.b64decode(b64_part + "==")
+                        if candidate[:4] == b"%PDF":
+                            pdf_bytes = candidate
+                            logger.info(
+                                "Blob via createObjectURL-Interceptor: %d bytes",
+                                len(pdf_bytes),
+                            )
+                        else:
+                            logger.warning(
+                                "Interceptor kein PDF (magic: %s)", candidate[:4]
+                            )
+                except Exception as e:
+                    logger.warning("createObjectURL-Interceptor fehlgeschlagen: %s", e)
+
             # blob: URL direkt über XHR lesen (requests kann keine blob: URLs;
             # fetch() schlägt fehl weil Klarna window.fetch überschreibt;
             # XHR läuft auf der Eltern-Seite, wo der Blob erstellt wurde)
