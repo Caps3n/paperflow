@@ -802,10 +802,13 @@ class KlarnaProvider(BaseProvider):
             pdf_url = new_page.url
             logger.info("Neuer Tab geöffnet: %s", pdf_url[:80])
             # blob: URL direkt über JS fetch lesen (requests kann keine blob: URLs)
+            # Wichtig: fetch muss auf der ELTERN-Seite laufen, weil der Blob dort
+            # erstellt wurde. Im neuen Tab schlägt fetch() mit "Failed to fetch" fehl.
             if pdf_url.startswith("blob:"):
                 try:
-                    b64 = new_page.evaluate("""async () => {
-                        const r = await fetch(document.URL);
+                    b64 = page.evaluate(
+                        """async (blobUrl) => {
+                        const r = await fetch(blobUrl);
                         const ab = await r.arrayBuffer();
                         const arr = new Uint8Array(ab);
                         let s = '';
@@ -814,7 +817,9 @@ class KlarnaProvider(BaseProvider):
                             s += String.fromCharCode.apply(null, arr.subarray(i, i + chunk));
                         }
                         return btoa(s);
-                    }""")
+                    }""",
+                        pdf_url,
+                    )
                     if b64:
                         candidate = _base64.b64decode(b64)
                         if candidate[:4] == b"%PDF":
