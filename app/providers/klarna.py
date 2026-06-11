@@ -27,7 +27,6 @@ import logging
 import os
 import random
 import re
-import socket
 import time
 import urllib.parse
 import urllib.request
@@ -137,19 +136,7 @@ class KlarnaProvider(BaseProvider):
         invoices: list[Invoice] = []
         logger.info("CDP-Modus: Verbinde mit Chrome auf %s", _CDP_URL)
 
-        # Resolve hostname → IP (Chrome DNS-rebinding protection)
         cdp_url = _CDP_URL
-        try:
-            parsed = urllib.parse.urlparse(_CDP_URL)
-            hostname = parsed.hostname or ""
-            if hostname and not hostname.replace(".", "").isdigit():
-                ip = socket.gethostbyname(hostname)
-                port = parsed.port
-                new_netloc = f"{ip}:{port}" if port else ip
-                cdp_url = urllib.parse.urlunparse(parsed._replace(netloc=new_netloc))
-                logger.info("CDP: %s → %s", _CDP_URL, cdp_url)
-        except Exception as exc:
-            logger.warning("CDP hostname resolution failed: %s", exc)
 
         # Warten bis Chrome bereit
         for attempt in range(30):
