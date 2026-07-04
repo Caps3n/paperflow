@@ -307,6 +307,17 @@ class KlarnaProvider(BaseProvider):
         except Exception:
             pass
 
+        # Session kann zwischen Login-Check und hier ablaufen/neu authentifiziert
+        # werden müssen (Klarna verlangt teils einen zusätzlichen Auth-Schritt für
+        # /manage-payments). Früh abbrechen statt 60s durch alle Strategien zu laufen.
+        if not _is_logged_in_url(page.url):
+            logger.warning(
+                "Klarna: Session für /manage-payments abgelaufen – bitte über "
+                "noVNC neu einloggen. Aktuelle URL: %s",
+                page.url,
+            )
+            return []
+
         # React SPA rendert Transaktionen nach networkidle → explizit warten
         # Warte bis entweder ein Transaction-Link ODER ein Button mit € erscheint
         for _wait_sel in [
