@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.02] - 2026-07-04
+
+### Fixed
+- Crash when `AMAZON_START_YEAR` is set to an empty string (e.g. left blank in the web UI's Settings form) instead of being unset — `int("")` raised `ValueError`, which `load_providers()` didn't catch, crashing the entire scan for every provider. Fixed the env-var read and broadened the loader's exception handling so a single misconfigured provider can't take down the others.
+
+---
+
 ## [1.0.01] - 2026-07-04
 
 ### Added
