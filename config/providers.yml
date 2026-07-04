@@ -9,11 +9,12 @@ providers:
     # Paperless-Correspondent
     correspondent: "Amazon"
 
-  # PayPal deaktiviert – Login durch Passkey-Dialog blockiert
-  # paypal:
-  #   enabled: false
-  #   tags: ["PayPal", "Kontoauszug"]
-  #   correspondent: "PayPal"
+  # PayPal: CDP-Modus mit manuellem Login (umgeht den Passkey-Dialog, der den
+  # vorherigen automatisierten Login blockiert hat)
+  paypal:
+    enabled: false
+    tags: ["PayPal", "Kontoauszug"]
+    correspondent: "PayPal"
 
   ikea:
     enabled: false

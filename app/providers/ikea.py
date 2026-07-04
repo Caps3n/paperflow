@@ -23,8 +23,6 @@ import os
 import random
 import re
 import time
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 import base64 as _base64
@@ -33,7 +31,7 @@ import requests as _requests
 from playwright.sync_api import Page, sync_playwright
 
 from app import database
-from app.providers import BaseProvider, Invoice
+from app.providers import BaseProvider, Invoice, wait_for_cdp
 
 logger = logging.getLogger("provider.ikea")
 
@@ -90,17 +88,7 @@ class IkeaProvider(BaseProvider):
 
         cdp_url = _CDP_URL
 
-        # Warten bis Chrome bereit
-        for attempt in range(30):
-            try:
-                urllib.request.urlopen(f"{cdp_url}/json/version", timeout=2)
-                break
-            except Exception:
-                if attempt == 0:
-                    logger.info("Warte auf Chrome CDP (%s)...", cdp_url)
-                time.sleep(2)
-        else:
-            logger.error("Chrome CDP nicht erreichbar nach 60s: %s", cdp_url)
+        if not wait_for_cdp(cdp_url, logger):
             return []
 
         with sync_playwright() as p:

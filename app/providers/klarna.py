@@ -28,15 +28,13 @@ import os
 import random
 import re
 import time
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 import requests as _requests
 from playwright.sync_api import Page, sync_playwright
 
 from app import database
-from app.providers import BaseProvider, Invoice
+from app.providers import BaseProvider, Invoice, wait_for_cdp
 
 logger = logging.getLogger("provider.klarna")
 
@@ -141,17 +139,7 @@ class KlarnaProvider(BaseProvider):
 
         cdp_url = _CDP_URL
 
-        # Warten bis Chrome bereit
-        for attempt in range(30):
-            try:
-                urllib.request.urlopen(f"{cdp_url}/json/version", timeout=2)
-                break
-            except Exception:
-                if attempt == 0:
-                    logger.info("Warte auf Chrome CDP (%s)...", cdp_url)
-                time.sleep(2)
-        else:
-            logger.error("Chrome CDP nicht erreichbar nach 60s: %s", cdp_url)
+        if not wait_for_cdp(cdp_url, logger):
             return []
 
         with sync_playwright() as p:
@@ -256,8 +244,43 @@ class KlarnaProvider(BaseProvider):
                         extra_tags=[str(year)],
                     )
                 )
+            elif txn.get("pending"):
+                # Zahlung noch in Bearbeitung → beim nächsten Lauf erneut prüfen,
+                # nicht in der DB vermerken.
+                logger.info("Zahlung noch in Bearbeitung: %s", txn["id"][:8])
+            elif txn.get("_no_download_option"):
+                # Kein ••• Button / kein "Auszug herunterladen" gefunden → dauerhaft
+                # kein Auszug verfügbar, nicht erneut versuchen.
+                logger.warning(
+                    "Kein PDF für %s – wird als 'no_pdf' markiert (wird nicht erneut versucht)",
+                    txn["id"],
+                )
+                database.mark_pending(
+                    self.provider_name, invoice_id, f"klarna_{txn['id']}.pdf"
+                )
+                database.mark_failed(
+                    self.provider_name,
+                    invoice_id,
+                    "Kein Download-Button gefunden",
+                    error_type="no_pdf",
+                )
             else:
-                logger.warning("Kein PDF für %s", txn["id"])
+                # Download-Button war da, Download ist aber fehlgeschlagen (z.B.
+                # Timeout, kein gültiges PDF) → beim nächsten Lauf erneut versuchen.
+                logger.warning(
+                    "Kein PDF für %s – Download fehlgeschlagen, wird beim nächsten "
+                    "Lauf erneut versucht",
+                    txn["id"],
+                )
+                database.mark_pending(
+                    self.provider_name, invoice_id, f"klarna_{txn['id']}.pdf"
+                )
+                database.mark_failed(
+                    self.provider_name,
+                    invoice_id,
+                    "Download fehlgeschlagen",
+                    error_type="download_failed",
+                )
 
         logger.info("Klarna: %d Auszüge gefunden", len(invoices))
         return invoices
@@ -678,6 +701,7 @@ class KlarnaProvider(BaseProvider):
 
         if not more_btn:
             logger.warning("Kein ••• Button für %s – überspringe", txn["id"])
+            txn["_no_download_option"] = True
             return None
 
         # ••• klicken → Mehr-Dialog öffnen
@@ -709,6 +733,7 @@ class KlarnaProvider(BaseProvider):
 
         if not auszug_btn:
             logger.warning("'Auszug herunterladen' nicht im Dialog für %s", txn["id"])
+            txn["_no_download_option"] = True
             # Dialog schließen
             try:
                 page.keyboard.press("Escape")

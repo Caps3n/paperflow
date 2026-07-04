@@ -8,6 +8,8 @@ Neue Provider einfach als neue Datei in diesem Ordner anlegen.
 from __future__ import annotations
 
 import logging
+import time
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -60,3 +62,27 @@ class BaseProvider:
         Gibt eine Liste von Invoice-Objekten zurück.
         """
         raise NotImplementedError
+
+
+def wait_for_cdp(
+    cdp_url: str,
+    logger: logging.Logger,
+    max_attempts: int = 30,
+    poll_interval_s: float = 2.0,
+) -> bool:
+    """Wartet bis der Chrome-CDP-Endpunkt erreichbar ist (Container-Start kann
+    etwas dauern). Gibt True zurück sobald erreichbar, sonst False nach Timeout."""
+    for attempt in range(max_attempts):
+        try:
+            urllib.request.urlopen(f"{cdp_url}/json/version", timeout=2)
+            return True
+        except Exception:
+            if attempt == 0:
+                logger.info("Warte auf Chrome CDP (%s)...", cdp_url)
+            time.sleep(poll_interval_s)
+    logger.error(
+        "Chrome CDP nicht erreichbar nach %ds: %s",
+        int(max_attempts * poll_interval_s),
+        cdp_url,
+    )
+    return False
