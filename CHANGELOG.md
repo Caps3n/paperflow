@@ -6,6 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- Amazon provider failed to import (`playwright-stealth` API mismatch), crashing the entire fetch run for every provider when Amazon was enabled
+- Provider loader now catches all `ImportError`s instead of only `ModuleNotFoundError`, so one broken provider module can no longer take down the others
+- IKEA: transient download failures (timeouts, network errors) were permanently blacklisted as `no_pdf` and never retried; only orders with no receipt button are now treated as permanent
+- IKEA: old orders that serve a JPG photo of the receipt instead of a PDF are now downloaded and uploaded correctly (previously rejected as "no valid PDF")
+- Paperless upload now sends the correct `Content-Type` based on the file extension instead of always `application/pdf`
+
+---
+
 ## [1.0.0] - 2026-06-08 — Stable Release
 
 ### Security

@@ -21,11 +21,13 @@ A built-in **web interface** (port `8085`) lets you configure everything, manage
 ## ✨ Features
 
 - **Automatic invoice download** from Amazon.de / Amazon.com, IKEA, and Klarna
+- **PDF & image receipts** — accepts JPG receipts for older orders (e.g. IKEA) in addition to PDF, with the correct upload content type
 - **Paperless-NGX upload** via REST API — sets tags, correspondent, date, and title automatically
 - **Product title extraction** — Paperless title shows the actual product name, not just the order number
 - **Duplicate prevention** — SQLite database tracks every processed invoice
+- **Retry-aware error tracking** — permanent failures (no receipt available) are skipped for good, while transient failures (timeouts, network errors) are retried on the next run
 - **Year-skip optimization** — past years that were fully scanned are skipped on subsequent runs
-- **Incremental scan mode** — optionally scan only the last 30 days for fast daily runs
+- **Incremental scan mode** — optionally scan only the last 30 days for fast daily runs (`AMAZON_INCREMENTAL`)
 - **Parallel uploads** — multiple PDFs uploaded simultaneously (configurable workers)
 - **Correspondent dropdown** — select the correct Paperless-NGX correspondent from a live list
 - **Year tags** — each invoice is automatically tagged with its year (e.g. `2024`)
@@ -65,8 +67,10 @@ Edit `.env`:
 | `AMAZON_MONTHS_BACK` | How many months back to scan | `12` |
 | `IKEA_EMAIL` | IKEA account email | — |
 | `IKEA_PASSWORD` | IKEA account password | — |
+| `AMAZON_INCREMENTAL` | Only scan the last 30 days instead of full history | `false` |
 | `UPLOAD_WORKERS` | Parallel upload threads | `3` |
 | `RUN_INTERVAL_HOURS` | How often to run (hours) | `24` |
+| `RUN_ON_STARTUP` | Run a scan immediately when the container starts | `true` |
 
 ### 3. Start
 
@@ -221,6 +225,7 @@ paperflow/
 
 ## 🛣️ Roadmap
 
+- [ ] PayPal provider (previously removed due to a passkey login block — planned to come back using the same virtual-authenticator technique as Amazon)
 - [ ] eBay provider
 - [ ] Email/IMAP provider (catch invoices sent by email)
 - [ ] Notification on completion (Telegram / ntfy)
