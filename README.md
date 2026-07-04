@@ -153,6 +153,8 @@ paperflow uses a persistent Chrome browser (`paperflow-chrome`) so you only log 
 3. Start a scan from the web UI — your session is reused automatically
 
 > PayPal previously required an automated email/password login that got blocked by PayPal's passkey dialog. It now uses the same manual-login CDP approach as IKEA and Klarna, so the passkey prompt is simply handled by you once, like any other login.
+>
+> PayPal's account statements are generated **asynchronously**: paperflow requests a missing month's report and picks up the finished PDF on a later run once PayPal marks it ready (this can take until the next day) — it won't appear in the same run it was requested in.
 
 **Alternative — Cookie import (no VNC needed):**
 

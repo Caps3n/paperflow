@@ -1,5 +1,5 @@
 """
-PayPal Provider – lädt monatliche Kontoauszüge (PDF) von PayPal herunter.
+PayPal Provider – lädt Kontoauszüge (PDF) von PayPal herunter.
 
 CDP-Modus:
   Verbindet sich mit dem paperflow-chrome Container via CDP.
@@ -11,11 +11,22 @@ CDP-Modus:
   übernimmt der Nutzer den Login einmalig manuell über noVNC – danach wird nur
   noch die bestehende Browser-Session weiterverwendet.
 
+Berichte sind ASYNCHRON (Stand 2026, https://www.paypal.com/reports/accountStatements):
+  "Kontoauszüge – monatlich und benutzerdefiniert" → Datumsbereich wählen →
+  "Erstellen" → der Bericht erscheint als neue Zeile in der Berichteverlauf-
+  Tabelle mit Status "In Bearbeitung" und wird typischerweise erst am
+  nächsten Tag fertig (Aktion wechselt zu "Herunterladen").
+
 Ablauf:
   1. Login-Check über https://www.paypal.com/myaccount/summary/
-  2. Für jeden Monat rückwirkend bis PAYPAL_MONTHS_BACK:
-     – Kontoauszug per Direct-Download-URL laden
-     – Fallback: Statements-Übersichtsseite → passenden Monat suchen
+  2. Berichteverlauf-Tabelle auf REPORTS_URL einlesen (Spalten: Erstellt am,
+     Datumsbereich, Lieferart, Format, Aktion)
+  3. Für jeden Monat rückwirkend bis PAYPAL_MONTHS_BACK:
+     – Zeile mit passendem Datumsbereich + "Herunterladen" → PDF laden
+     – Zeile mit "In Bearbeitung" → überspringen, nächsten Lauf erneut prüfen
+       (wie Klarnas "Zahlung in Bearbeitung" – kein Fehler, kein DB-Eintrag)
+     – Keine Zeile vorhanden → neuen Bericht anfordern, Ergebnis kommt beim
+       nächsten Lauf
 """
 
 from __future__ import annotations
@@ -25,10 +36,11 @@ import datetime
 import logging
 import os
 import random
+import re
 import time
 from pathlib import Path
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import ElementHandle, Page, sync_playwright
 
 from app import database
 from app.providers import BaseProvider, Invoice, wait_for_cdp
@@ -36,7 +48,7 @@ from app.providers import BaseProvider, Invoice, wait_for_cdp
 logger = logging.getLogger("provider.paypal")
 
 SUMMARY_URL = "https://www.paypal.com/myaccount/summary/"
-STATEMENTS_URL = "https://www.paypal.com/myaccount/statement/"
+REPORTS_URL = "https://www.paypal.com/reports/accountStatements"
 
 _CDP_URL = os.environ.get("CHROME_CDP_URL", "").strip()
 
@@ -55,6 +67,8 @@ _DE_MONTHS = [
     "Dezember",
 ]
 
+_RANGE_RE = re.compile(r"\d{2}\.\d{2}\.\d{2}\s*-\s*\d{2}\.\d{2}\.\d{2}")
+
 
 def _sleep(min_s: float = 1.0, max_s: float = 2.5) -> None:
     time.sleep(random.uniform(min_s, max_s))
@@ -63,6 +77,14 @@ def _sleep(min_s: float = 1.0, max_s: float = 2.5) -> None:
 def _is_logged_in_url(url: str) -> bool:
     """True wenn der Browser eingeloggt ist (kein Login-Redirect)."""
     return "/myaccount/" in url and "/signin" not in url
+
+
+def _range_text(year: int, month: int) -> str:
+    """Baut den Datumsbereich-Text wie ihn PayPal in der Berichtstabelle
+    anzeigt, z.B. '01.06.26 - 30.06.26'."""
+    last_day = calendar.monthrange(year, month)[1]
+    yy = year % 100
+    return f"01.{month:02d}.{yy:02d} - {last_day:02d}.{month:02d}.{yy:02d}"
 
 
 class PaypalProvider(BaseProvider):
@@ -172,11 +194,31 @@ class PaypalProvider(BaseProvider):
         invoices: list[Invoice] = []
         today = datetime.date.today()
 
+        page.goto(REPORTS_URL, timeout=30_000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=20_000)
+        except Exception:
+            pass
+        _sleep(2, 3)
+
+        if not _is_logged_in_url(page.url):
+            logger.warning(
+                "PayPal: Session abgelaufen beim Zugriff auf die Berichte-Seite – "
+                "bitte über noVNC neu einloggen. Aktuelle URL: %s",
+                page.url,
+            )
+            return []
+
+        report_rows = self._parse_report_rows(page)
+        logger.info(
+            "PayPal: %d Berichte in der Berichteverlauf-Tabelle", len(report_rows)
+        )
+
         for year, month in self._months_to_scan():
             if years_filter and year not in years_filter:
                 continue
 
-            # Laufender Monat noch nicht vollständig → erst ab dem 5. versuchen
+            # Laufender Monat noch nicht abgeschlossen → erst ab dem 5. anfordern
             if year == today.year and month == today.month and today.day < 5:
                 logger.info(
                     "Laufender Monat (%04d/%02d) noch nicht vollständig – überspringe",
@@ -190,8 +232,33 @@ class PaypalProvider(BaseProvider):
                 logger.info("Bereits verarbeitet: %s", invoice_id)
                 continue
 
-            pdf_path = self._download_statement(page, year, month)
+            expected = _range_text(year, month)
+            row = next((r for r in report_rows if r["range_text"] == expected), None)
 
+            if row is None:
+                # Noch nie angefordert → anfordern, Ergebnis kommt i.d.R. erst
+                # beim nächsten Lauf. Kein Fehler, kein DB-Eintrag.
+                logger.info(
+                    "Kein Bericht für %04d/%02d vorhanden – fordere neuen Bericht an",
+                    year,
+                    month,
+                )
+                self._request_report(page, year, month)
+                _sleep(1, 2)
+                continue
+
+            if not row["ready"]:
+                # Bereits angefordert, aber noch "In Bearbeitung" – wie Klarnas
+                # "Zahlung in Bearbeitung": kein Fehler, einfach nächsten Lauf
+                # erneut prüfen.
+                logger.info(
+                    "Bericht für %04d/%02d noch in Bearbeitung – überspringe",
+                    year,
+                    month,
+                )
+                continue
+
+            pdf_path = self._download_ready_report(page, row["row"], year, month)
             if pdf_path and pdf_path.exists():
                 last_day = calendar.monthrange(year, month)[1]
                 invoices.append(
@@ -204,14 +271,12 @@ class PaypalProvider(BaseProvider):
                     )
                 )
             else:
-                # Kein Auszug gefunden oder Download fehlgeschlagen. Wir können hier
-                # nicht zuverlässig zwischen "existiert nicht" und "Selektoren
-                # passen nicht" unterscheiden (siehe _try_statements_page) – daher
-                # immer als transient behandeln und beim nächsten Lauf erneut
-                # versuchen, statt einen echten Auszug für immer zu verlieren.
+                # Bericht war laut Tabelle fertig, Download ist aber
+                # fehlgeschlagen (Timeout, kein gültiges PDF) → transient,
+                # beim nächsten Lauf erneut versuchen.
                 logger.warning(
-                    "Kein Auszug für %04d/%02d – wird beim nächsten Lauf erneut "
-                    "versucht",
+                    "Download fehlgeschlagen für fertigen Bericht %04d/%02d – wird "
+                    "beim nächsten Lauf erneut versucht",
                     year,
                     month,
                 )
@@ -228,142 +293,157 @@ class PaypalProvider(BaseProvider):
         logger.info("PayPal: %d Auszüge gefunden", len(invoices))
         return invoices
 
-    # ── Download ───────────────────────────────────────────────────
+    # ── Berichteverlauf-Tabelle ──────────────────────────────────────
 
-    def _download_statement(self, page: Page, year: int, month: int) -> Path | None:
-        """Lädt den Kontoauszug für year/month."""
-        last_day = calendar.monthrange(year, month)[1]
-        start = f"{year:04d}-{month:02d}-01"
-        end = f"{year:04d}-{month:02d}-{last_day:02d}"
-        out_path = self.download_dir / f"paypal_statement_{year:04d}_{month:02d}.pdf"
-
-        download_url = (
-            f"https://www.paypal.com/myaccount/statement/download"
-            f"?startDate={start}&endDate={end}&format=PDF"
-        )
-
-        logger.info("Lade Kontoauszug %04d/%02d …", year, month)
-
-        pdf_bytes = self._try_direct_download(page, download_url, out_path)
-        if pdf_bytes is None:
-            pdf_bytes = self._try_statements_page(page, year, month, out_path)
-
-        if pdf_bytes is None:
-            return None
-
-        out_path.write_bytes(pdf_bytes)
-        logger.info(
-            "Kontoauszug gespeichert: %s (%d bytes)", out_path.name, len(pdf_bytes)
-        )
-        return out_path
-
-    def _try_direct_download(
-        self, page: Page, download_url: str, out_path: Path
-    ) -> bytes | None:
+    def _parse_report_rows(self, page: Page) -> list[dict]:
+        """Liest die Berichteverlauf-Tabelle (Spalten: Erstellt am,
+        Datumsbereich, Lieferart, Format, Aktion). Gibt eine Liste von
+        {"range_text": "01.06.26 - 30.06.26", "ready": bool, "row": ElementHandle}
+        zurück. "ready" ist True wenn die Aktion "Herunterladen" zeigt, False
+        wenn "In Bearbeitung"."""
+        rows: list[dict] = []
         try:
+            trs = page.query_selector_all("tr")
+        except Exception:
+            trs = []
+
+        for tr in trs:
+            try:
+                text = tr.inner_text()
+            except Exception:
+                continue
+            m = _RANGE_RE.search(text)
+            if not m:
+                continue
+            ready = "herunterladen" in text.lower()
+            rows.append({"range_text": m.group(0), "ready": ready, "row": tr})
+
+        if not rows:
+            logger.info("Keine Zeilen in der Berichteverlauf-Tabelle gefunden")
+            self._debug_dump(page, "Berichteverlauf-Tabelle leer/nicht gefunden")
+
+        return rows
+
+    def _download_ready_report(
+        self, page: Page, row: ElementHandle, year: int, month: int
+    ) -> Path | None:
+        out_path = self.download_dir / f"paypal_statement_{year:04d}_{month:02d}.pdf"
+        try:
+            dl_el = row.query_selector("text=Herunterladen") or row.query_selector(
+                "button, a"
+            )
+            if not dl_el:
+                logger.warning(
+                    "'Herunterladen' Element nicht in Zeile für %04d/%02d gefunden",
+                    year,
+                    month,
+                )
+                return None
             with page.expect_download(timeout=30_000) as dl_info:
-                page.goto(download_url, timeout=30_000)
+                dl_el.click()
             download = dl_info.value
             download.save_as(str(out_path))
             if out_path.exists() and out_path.stat().st_size > 500:
                 candidate = out_path.read_bytes()
                 if candidate[:4] == b"%PDF":
-                    return candidate
-                logger.info(
-                    "Direct-Download kein PDF (%d bytes) – versuche Statements-Seite",
-                    len(candidate),
-                )
-            return None
-        except Exception as exc:
-            logger.info(
-                "Direct-Download fehlgeschlagen: %s – versuche Statements-Seite", exc
-            )
-            return None
-
-    def _try_statements_page(
-        self, page: Page, year: int, month: int, out_path: Path
-    ) -> bytes | None:
-        """Fallback: Statements-Übersichtsseite → passenden Monat suchen."""
-        try:
-            page.goto(STATEMENTS_URL, timeout=30_000)
-            try:
-                page.wait_for_load_state("networkidle", timeout=20_000)
-            except Exception:
-                pass
-            _sleep(2, 3)
-
-            if not _is_logged_in_url(page.url):
-                logger.warning(
-                    "PayPal: Session abgelaufen beim Zugriff auf Statements-Seite – "
-                    "bitte über noVNC neu einloggen. Aktuelle URL: %s",
-                    page.url,
-                )
-                return None
-
-            month_name = _DE_MONTHS[month - 1]
-            year_str = str(year)
-
-            link = None
-            for sel in [
-                f"a:has-text('{month_name} {year_str}')",
-                f"a:has-text('{month_name[:3]}. {year_str}')",
-                f"*:has-text('{month_name} {year_str}') >> a[href*='pdf']",
-                f"*:has-text('{month_name} {year_str}') >> a[href*='download']",
-                f"*:has-text('{month_name} {year_str}') >> button",
-            ]:
-                try:
-                    candidate_el = page.query_selector(sel)
-                    if candidate_el:
-                        link = candidate_el
-                        break
-                except Exception:
-                    continue
-
-            if not link:
-                # NICHT als dauerhaft fehlend markieren: wir können hier nicht
-                # zuverlässig unterscheiden zwischen "kein Auszug für diesen Monat"
-                # und "unsere Selektoren passen nicht zur aktuellen PayPal-Seite".
-                # Lieber erneut versuchen als einen echten Auszug für immer zu
-                # verlieren. Zur Diagnose: Linktexte auf der Seite loggen.
-                logger.info(
-                    "Kein Auszug-Link für %04d/%02d auf Statements-Seite", year, month
-                )
-                try:
-                    all_links = page.evaluate(
-                        """
-                        () => [...document.querySelectorAll('a, button')]
-                            .map(el => (el.textContent || '').trim())
-                            .filter(t => t.length > 0)
-                            .slice(0, 40)
-                        """
-                    )
                     logger.info(
-                        "DEBUG PayPal Statements-Seite Links/Buttons: %s", all_links
+                        "Kontoauszug gespeichert: %s (%d bytes)",
+                        out_path.name,
+                        len(candidate),
                     )
-                except Exception as de:
-                    logger.debug("DEBUG-Dump fehlgeschlagen: %s", de)
-                return None
-
-            try:
-                with page.expect_download(timeout=20_000) as dl_info:
-                    link.click()
-                download = dl_info.value
-                download.save_as(str(out_path))
-                if out_path.exists() and out_path.stat().st_size > 500:
-                    candidate = out_path.read_bytes()
-                    if candidate[:4] == b"%PDF":
-                        return candidate
-                return None
-            except Exception as exc:
-                logger.warning(
-                    "Download über Statements-Seite fehlgeschlagen für %04d/%02d: %s",
-                    year,
-                    month,
-                    exc,
-                )
-                return None
+                    return out_path
+            return None
         except Exception as exc:
             logger.warning(
-                "Statements-Seite für %04d/%02d fehlgeschlagen: %s", year, month, exc
+                "Download für fertigen Bericht %04d/%02d fehlgeschlagen: %s",
+                year,
+                month,
+                exc,
             )
             return None
+
+    # ── Bericht anfordern ────────────────────────────────────────────
+
+    def _request_report(self, page: Page, year: int, month: int) -> None:
+        """Fordert über das Datumsbereich-Dropdown + 'Erstellen'-Button einen
+        neuen Bericht für year/month an. Best-effort: die genaue Struktur des
+        'Benutzerdefiniert'-Datumsfelds ist nicht bekannt (kein Live-Zugriff
+        beim Schreiben dieses Codes) – bei Fehlschlag wird ein Debug-Dump der
+        Dropdown-/Eingabe-Elemente geloggt, um die Selektoren nachzuschärfen."""
+        try:
+            dropdown = page.query_selector("text=Datumsbereich")
+            if dropdown:
+                dropdown.click()
+            _sleep(0.5, 1)
+
+            custom_opt = page.query_selector("text=Benutzerdefiniert")
+            if custom_opt:
+                custom_opt.click()
+                _sleep(0.5, 1)
+            else:
+                logger.warning(
+                    "'Benutzerdefiniert'-Option nicht im Datumsbereich-Dropdown "
+                    "gefunden für %04d/%02d",
+                    year,
+                    month,
+                )
+                self._debug_dump(page, f"Datumsbereich-Dropdown für {year}/{month:02d}")
+                return
+
+            last_day = calendar.monthrange(year, month)[1]
+            start_str = f"{year:04d}-{month:02d}-01"
+            end_str = f"{year:04d}-{month:02d}-{last_day:02d}"
+
+            date_inputs = page.query_selector_all("input[type='date']")
+            if len(date_inputs) < 2:
+                date_inputs = page.query_selector_all("input")
+            if len(date_inputs) >= 2:
+                date_inputs[0].fill(start_str)
+                date_inputs[1].fill(end_str)
+            else:
+                logger.warning(
+                    "Keine Datumsfelder für Benutzerdefiniert gefunden – Bericht "
+                    "%04d/%02d evtl. nicht korrekt angefordert",
+                    year,
+                    month,
+                )
+                self._debug_dump(page, f"Datumsfelder für {year}/{month:02d}")
+                return
+            _sleep(0.5, 1)
+
+            create_btn = page.query_selector("button:has-text('Erstellen')")
+            if not create_btn:
+                logger.warning(
+                    "'Erstellen'-Button nicht gefunden für %04d/%02d", year, month
+                )
+                self._debug_dump(page, f"Erstellen-Button für {year}/{month:02d}")
+                return
+
+            create_btn.click()
+            logger.info(
+                "Bericht für %04d/%02d angefordert – Ergebnis kommt i.d.R. erst "
+                "beim nächsten Lauf",
+                year,
+                month,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Bericht-Anfrage für %04d/%02d fehlgeschlagen: %s", year, month, exc
+            )
+            self._debug_dump(page, f"Bericht-Anfrage-Exception für {year}/{month:02d}")
+
+    def _debug_dump(self, page: Page, context: str) -> None:
+        """Loggt Buttons/Optionen/Eingabefelder auf der Seite zur Diagnose,
+        wenn ein Selektor nicht wie erwartet passt."""
+        try:
+            texts = page.evaluate(
+                """
+                () => [...document.querySelectorAll('button, [role="option"], li, input, a')]
+                    .map(el => el.tagName + ':' + (el.textContent || el.placeholder || el.getAttribute('aria-label') || '').trim())
+                    .filter(t => t.length > 3)
+                    .slice(0, 50)
+                """
+            )
+            logger.info("DEBUG PayPal (%s): %s", context, texts)
+        except Exception as de:
+            logger.debug("DEBUG-Dump fehlgeschlagen (%s): %s", context, de)
