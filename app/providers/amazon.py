@@ -29,7 +29,7 @@ from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
 from playwright_stealth import stealth_sync
 
 from app import database, otp_state
-from app.providers import BaseProvider, Invoice
+from app.providers import BaseProvider, Invoice, wait_for_cdp
 
 logger = logging.getLogger("provider.amazon")
 
@@ -128,21 +128,9 @@ class AmazonProvider(BaseProvider):
         invoices: list[Invoice] = []
         logger.info("CDP-Modus: Verbinde mit Chrome auf %s", _CDP_URL)
 
-        import urllib.request
-
         cdp_url = _CDP_URL
 
-        # Wait until Chrome is ready (container start may take a moment)
-        for attempt in range(30):
-            try:
-                urllib.request.urlopen(f"{cdp_url}/json/version", timeout=2)
-                break
-            except Exception:
-                if attempt == 0:
-                    logger.info("Waiting for Chrome CDP (%s)...", cdp_url)
-                time.sleep(2)
-        else:
-            logger.error("Chrome CDP unreachable after 60s: %s", cdp_url)
+        if not wait_for_cdp(cdp_url, logger):
             return []
 
         with sync_playwright() as p:

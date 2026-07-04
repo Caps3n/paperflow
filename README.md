@@ -20,7 +20,7 @@ A built-in **web interface** (port `8085`) lets you configure everything, manage
 
 ## ✨ Features
 
-- **Automatic invoice download** from Amazon.de / Amazon.com, IKEA, and Klarna
+- **Automatic invoice download** from Amazon.de / Amazon.com, IKEA, Klarna, and PayPal
 - **PDF & image receipts** — accepts JPG receipts for older orders (e.g. IKEA) in addition to PDF, with the correct upload content type
 - **Paperless-NGX upload** via REST API — sets tags, correspondent, date, and title automatically
 - **Product title extraction** — Paperless title shows the actual product name, not just the order number
@@ -65,9 +65,10 @@ Edit `.env`:
 | `AMAZON_PASSWORD` | Amazon account password | — |
 | `AMAZON_DOMAIN` | `amazon.de` or `amazon.com` | `amazon.de` |
 | `AMAZON_MONTHS_BACK` | How many months back to scan | `12` |
-| `IKEA_EMAIL` | IKEA account email | — |
-| `IKEA_PASSWORD` | IKEA account password | — |
 | `AMAZON_INCREMENTAL` | Only scan the last 30 days instead of full history | `false` |
+| `IKEA_MONTHS_BACK` | How many months back to scan | `12` |
+| `PAYPAL_MONTHS_BACK` | How many months back to scan | `12` |
+| `CHROME_CDP_URL` | CDP endpoint of the `paperflow-chrome` container | set automatically in `docker-compose.yml` |
 | `UPLOAD_WORKERS` | Parallel upload threads | `3` |
 | `RUN_INTERVAL_HOURS` | How often to run (hours) | `24` |
 | `RUN_ON_STARTUP` | Run a scan immediately when the container starts | `true` |
@@ -143,13 +144,15 @@ paperflow connects to Chrome over CDP (Chrome DevTools Protocol), uses the live 
 
 ---
 
-## 🔐 Browser Login (Amazon, IKEA & Klarna)
+## 🔐 Browser Login (Amazon, IKEA, Klarna & PayPal)
 
 paperflow uses a persistent Chrome browser (`paperflow-chrome`) so you only log in once:
 
 1. Open **http://\<server\>:6080** in your browser (noVNC web UI)
-2. Log into Amazon, IKEA, or Klarna — including any 2FA prompts
+2. Log into Amazon, IKEA, Klarna, or PayPal — including any 2FA/passkey prompts
 3. Start a scan from the web UI — your session is reused automatically
+
+> PayPal previously required an automated email/password login that got blocked by PayPal's passkey dialog. It now uses the same manual-login CDP approach as IKEA and Klarna, so the passkey prompt is simply handled by you once, like any other login.
 
 **Alternative — Cookie import (no VNC needed):**
 
@@ -225,7 +228,7 @@ paperflow/
 
 ## 🛣️ Roadmap
 
-- [ ] PayPal provider (previously removed due to a passkey login block — planned to come back using the same virtual-authenticator technique as Amazon)
+- [x] PayPal provider (previously removed due to a passkey login block — reactivated using the same manual CDP login as IKEA/Klarna)
 - [ ] eBay provider
 - [ ] Email/IMAP provider (catch invoices sent by email)
 - [ ] Notification on completion (Telegram / ntfy)

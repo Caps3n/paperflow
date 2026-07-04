@@ -8,12 +8,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **PayPal provider reactivated** — uses the same manual CDP login as IKEA/Klarna (log in once via noVNC), avoiding the automated-login passkey block that got the previous PayPal provider removed. Downloads monthly account statements as PDF.
+
+### Changed
+- All CDP providers (Amazon, IKEA, Klarna, PayPal) now share a single `wait_for_cdp()` helper instead of duplicating the "wait for Chrome to be ready" loop
+- Klarna: failed downloads are now recorded in the database like IKEA — permanently unavailable statements (no download button found) are marked `no_pdf` and skipped for good, while transient failures (timeouts, invalid PDF) are retried on the next run instead of being silently retried forever without any visibility in the history page
+
 ### Fixed
 - Amazon provider failed to import (`playwright-stealth` API mismatch), crashing the entire fetch run for every provider when Amazon was enabled
 - Provider loader now catches all `ImportError`s instead of only `ModuleNotFoundError`, so one broken provider module can no longer take down the others
 - IKEA: transient download failures (timeouts, network errors) were permanently blacklisted as `no_pdf` and never retried; only orders with no receipt button are now treated as permanent
 - IKEA: old orders that serve a JPG photo of the receipt instead of a PDF are now downloaded and uploaded correctly (previously rejected as "no valid PDF")
 - Paperless upload now sends the correct `Content-Type` based on the file extension instead of always `application/pdf`
+- README/`.env.example` documented `IKEA_EMAIL`/`IKEA_PASSWORD` even though IKEA is CDP-only (manual login) and never reads those variables — removed
 
 ---
 
