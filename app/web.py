@@ -307,13 +307,6 @@ PROVIDER_ENV_FIELDS: dict[str, list[dict]] = {
             "type": "number",
         },
     ],
-    "paypal": [
-        {
-            "key": "PAYPAL_MONTHS_BACK",
-            "label": "Months back (e.g. 12)",
-            "type": "number",
-        },
-    ],
 }
 
 
