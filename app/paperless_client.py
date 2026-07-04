@@ -4,6 +4,7 @@ Dokumentiert unter: https://docs.paperless-ngx.com/api/
 """
 
 import logging
+import mimetypes
 import os
 from pathlib import Path
 
@@ -69,7 +70,8 @@ class PaperlessClient:
             if created_date:
                 data["created"] = created_date
 
-            files = {"document": (file_path.name, f, "application/pdf")}
+            content_type = mimetypes.guess_type(file_path.name)[0] or "application/pdf"
+            files = {"document": (file_path.name, f, content_type)}
 
             # Tags als mehrfache Form-Felder
             form_data = list(data.items())

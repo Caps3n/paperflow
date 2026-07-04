@@ -47,6 +47,16 @@ def _sleep(min_s: float = 1.0, max_s: float = 2.5) -> None:
     time.sleep(random.uniform(min_s, max_s))
 
 
+def _detect_ext(data: bytes) -> str | None:
+    """Erkennt PDF/JPG anhand der Magic Bytes. Ältere IKEA-Bestellungen liefern
+    teils ein JPG-Foto des Kassenbons statt eines PDFs."""
+    if data[:4] == b"%PDF":
+        return "pdf"
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    return None
+
+
 def _is_logged_in_url(url: str) -> bool:
     """Prüft ob URL auf eingeloggten Zustand hindeutet."""
     return "accounts.ikea.com" not in url and "/profile/login" not in url
@@ -348,39 +358,53 @@ class IkeaProvider(BaseProvider):
             try:
                 dl_btn = page.wait_for_selector(sel, timeout=5_000)
                 if dl_btn and dl_btn.is_visible():
-                    out_path = self.download_dir / f"ikea_{order['id']}.pdf"
+                    tmp_path = self.download_dir / f"ikea_{order['id']}.tmp"
                     with page.expect_download(timeout=30_000) as dl_info:
                         dl_btn.click()
                     download = dl_info.value
                     # CDP-Modus: Browser läuft in separatem Container.
-                    # download.url kann ein data:-URL sein (base64-kodiertes PDF) →
+                    # download.url kann ein data:-URL sein (base64-kodiert) →
                     # direkt dekodieren statt save_as() zu nutzen.
-                    pdf_bytes: bytes | None = None
+                    # Ältere Bestellungen liefern teils ein JPG-Foto statt PDF.
+                    file_bytes: bytes | None = None
+                    ext: str | None = None
 
                     if download.url.startswith("data:"):
-                        # data:application/pdf;base64,JVBERi...
+                        # data:application/pdf;base64,JVBERi... oder image/jpeg
                         try:
                             _, b64 = download.url.split(",", 1)
-                            pdf_bytes = _base64.b64decode(b64)
-                            logger.info("Data-URL dekodiert: %d bytes", len(pdf_bytes))
+                            candidate = _base64.b64decode(b64)
+                            ext = _detect_ext(candidate)
+                            if ext:
+                                file_bytes = candidate
+                                logger.info(
+                                    "Data-URL dekodiert: %d bytes (%s)",
+                                    len(candidate),
+                                    ext,
+                                )
                         except Exception as de:
                             logger.warning(
                                 "Data-URL Dekodierung fehlgeschlagen: %s", de
                             )
                     else:
                         # Normaler HTTP-Download: save_as() versuchen
-                        download.save_as(str(out_path))
-                        if out_path.exists() and out_path.stat().st_size > 500:
-                            candidate = out_path.read_bytes()
-                            if candidate[:4] == b"%PDF":
-                                pdf_bytes = candidate
+                        download.save_as(str(tmp_path))
+                        if tmp_path.exists() and tmp_path.stat().st_size > 500:
+                            candidate = tmp_path.read_bytes()
+                            ext = _detect_ext(candidate)
+                            if ext:
+                                file_bytes = candidate
                             else:
                                 logger.info(
-                                    "save_as() kein PDF (%d bytes) – versuche requests",
+                                    "save_as() kein PDF/JPG (%d bytes) – versuche requests",
                                     len(candidate),
                                 )
+                        try:
+                            tmp_path.unlink(missing_ok=True)
+                        except Exception:
+                            pass
 
-                        if pdf_bytes is None:
+                        if file_bytes is None:
                             # Fallback: HTTP-Download mit Browser-Cookies
                             try:
                                 cookies = {
@@ -394,33 +418,33 @@ class IkeaProvider(BaseProvider):
                                     headers={"User-Agent": "Mozilla/5.0"},
                                 )
                                 content = resp.content
-                                if (
-                                    resp.ok
-                                    and len(content) > 500
-                                    and content[:4] == b"%PDF"
-                                ):
-                                    pdf_bytes = content
+                                ext = _detect_ext(content)
+                                if resp.ok and len(content) > 500 and ext:
+                                    file_bytes = content
                                     logger.info(
-                                        "HTTP-Fallback OK: %d bytes", len(content)
+                                        "HTTP-Fallback OK: %d bytes (%s)",
+                                        len(content),
+                                        ext,
                                     )
                                 else:
                                     logger.warning(
-                                        "HTTP-Fallback kein PDF: status=%s size=%d",
+                                        "HTTP-Fallback kein PDF/JPG: status=%s size=%d",
                                         resp.status_code,
                                         len(content),
                                     )
                             except Exception as de:
                                 logger.warning("HTTP-Fallback Fehler: %s", de)
 
-                    if pdf_bytes is None or pdf_bytes[:4] != b"%PDF":
-                        logger.warning("Kein gültiges PDF für %s", order["id"])
+                    if file_bytes is None or ext is None:
+                        logger.warning("Kein gültiges PDF/JPG für %s", order["id"])
                         return None
 
-                    out_path.write_bytes(pdf_bytes)
+                    out_path = self.download_dir / f"ikea_{order['id']}.{ext}"
+                    out_path.write_bytes(file_bytes)
                     logger.info(
                         "Kassenbon gespeichert: %s (%d bytes)",
                         out_path.name,
-                        len(pdf_bytes),
+                        len(file_bytes),
                     )
                     return out_path
             except Exception as e:
