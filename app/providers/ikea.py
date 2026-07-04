@@ -189,12 +189,13 @@ class IkeaProvider(BaseProvider):
                         extra_tags=[str(order["year"])],
                     )
                 )
-            else:
+            elif order.get("_no_receipt_button"):
+                # Kein Download-Button vorhanden → dauerhaft kein PDF verfügbar,
+                # nicht erneut versuchen (z.B. sehr alte Bestellungen).
                 logger.warning(
                     "Kein PDF für %s – wird als 'no_pdf' markiert (wird nicht erneut versucht)",
                     order["id"],
                 )
-                # In DB eintragen damit der Scan beim nächsten Lauf übersprungen wird
                 database.mark_pending(
                     self.provider_name, invoice_id, f"ikea_{order['id']}.pdf"
                 )
@@ -203,6 +204,23 @@ class IkeaProvider(BaseProvider):
                     invoice_id,
                     "Kein 'Kassenbon & Rechnung' Button gefunden",
                     error_type="no_pdf",
+                )
+            else:
+                # Button war da, Download ist aber fehlgeschlagen (z.B. Timeout,
+                # Netzwerkfehler) → beim nächsten Lauf erneut versuchen.
+                logger.warning(
+                    "Kein PDF für %s – Download fehlgeschlagen, wird beim nächsten "
+                    "Lauf erneut versucht",
+                    order["id"],
+                )
+                database.mark_pending(
+                    self.provider_name, invoice_id, f"ikea_{order['id']}.pdf"
+                )
+                database.mark_failed(
+                    self.provider_name,
+                    invoice_id,
+                    "Download fehlgeschlagen",
+                    error_type="download_failed",
                 )
 
         logger.info("IKEA: %d Rechnungen gefunden", len(invoices))
@@ -317,6 +335,7 @@ class IkeaProvider(BaseProvider):
 
         if not receipt_btn:
             logger.warning("Kein 'Kassenbon & Rechnung' Button für %s", order["id"])
+            order["_no_receipt_button"] = True
             return None
 
         receipt_btn.click()
