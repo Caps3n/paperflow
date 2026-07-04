@@ -64,10 +64,6 @@ class PaperlessClient:
             data = {}
             if title:
                 data["title"] = title
-            if tag_ids:
-                for tid in tag_ids:
-                    # Paperless erwartet mehrere 'tags' Felder
-                    pass
             if correspondent_id:
                 data["correspondent"] = correspondent_id
             if created_date:

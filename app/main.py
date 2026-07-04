@@ -88,7 +88,7 @@ def load_providers(config: dict) -> list[BaseProvider]:
             cls = getattr(module, class_name)
             providers.append(cls(cfg))
             logger.info("Provider geladen: %s", name)
-        except (ModuleNotFoundError, AttributeError, FileNotFoundError) as e:
+        except (ImportError, AttributeError, FileNotFoundError) as e:
             logger.error("Provider '%s' konnte nicht geladen werden: %s", name, e)
     return providers
 
