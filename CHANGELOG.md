@@ -6,7 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [1.0.01] - 2026-07-04
 
 ### Added
 - **PayPal provider reactivated** — uses the same manual CDP login as IKEA/Klarna (log in once via noVNC), avoiding the automated-login passkey block that got the previous PayPal provider removed. PayPal's account statements are generated **asynchronously**: a report is requested for a given month and typically only becomes downloadable on a later run, so paperflow requests missing months and then picks up the finished PDF once PayPal marks it ready — the same "check again next run" pattern already used for Klarna's in-progress payments. The exact selectors for requesting a *new* report are best-effort (no live PayPal access while building this) and log diagnostic output if they don't match; downloading an already-ready report was verified against real production log output.
