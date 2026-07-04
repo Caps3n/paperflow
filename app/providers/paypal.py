@@ -190,8 +190,7 @@ class PaypalProvider(BaseProvider):
                 logger.info("Bereits verarbeitet: %s", invoice_id)
                 continue
 
-            stmt = {"year": year, "month": month}
-            pdf_path = self._download_statement(page, stmt)
+            pdf_path = self._download_statement(page, year, month)
 
             if pdf_path and pdf_path.exists():
                 last_day = calendar.monthrange(year, month)[1]
@@ -204,30 +203,15 @@ class PaypalProvider(BaseProvider):
                         extra_tags=[str(year)],
                     )
                 )
-            elif stmt.get("_no_statement"):
-                # Kein Auszug für diesen Monat vorhanden (z.B. keine Aktivität,
-                # oder Account existierte noch nicht) → dauerhaft überspringen.
-                logger.warning(
-                    "Kein Auszug für %04d/%02d – wird als 'no_pdf' markiert "
-                    "(wird nicht erneut versucht)",
-                    year,
-                    month,
-                )
-                database.mark_pending(
-                    self.provider_name, invoice_id, f"{invoice_id}.pdf"
-                )
-                database.mark_failed(
-                    self.provider_name,
-                    invoice_id,
-                    "Kein Kontoauszug für diesen Monat gefunden",
-                    error_type="no_pdf",
-                )
             else:
-                # Auszug sollte existieren, Download ist aber fehlgeschlagen
-                # (z.B. Timeout, Netzwerkfehler) → beim nächsten Lauf erneut versuchen.
+                # Kein Auszug gefunden oder Download fehlgeschlagen. Wir können hier
+                # nicht zuverlässig zwischen "existiert nicht" und "Selektoren
+                # passen nicht" unterscheiden (siehe _try_statements_page) – daher
+                # immer als transient behandeln und beim nächsten Lauf erneut
+                # versuchen, statt einen echten Auszug für immer zu verlieren.
                 logger.warning(
-                    "Download fehlgeschlagen für %04d/%02d – wird beim nächsten "
-                    "Lauf erneut versucht",
+                    "Kein Auszug für %04d/%02d – wird beim nächsten Lauf erneut "
+                    "versucht",
                     year,
                     month,
                 )
@@ -246,11 +230,8 @@ class PaypalProvider(BaseProvider):
 
     # ── Download ───────────────────────────────────────────────────
 
-    def _download_statement(self, page: Page, stmt: dict) -> Path | None:
-        """Lädt den Kontoauszug für stmt['year']/stmt['month'].
-        Setzt stmt['_no_statement'] = True wenn dauerhaft kein Auszug existiert
-        (z.B. keine Aktivität in diesem Monat)."""
-        year, month = stmt["year"], stmt["month"]
+    def _download_statement(self, page: Page, year: int, month: int) -> Path | None:
+        """Lädt den Kontoauszug für year/month."""
         last_day = calendar.monthrange(year, month)[1]
         start = f"{year:04d}-{month:02d}-01"
         end = f"{year:04d}-{month:02d}-{last_day:02d}"
@@ -265,7 +246,7 @@ class PaypalProvider(BaseProvider):
 
         pdf_bytes = self._try_direct_download(page, download_url, out_path)
         if pdf_bytes is None:
-            pdf_bytes = self._try_statements_page(page, year, month, out_path, stmt)
+            pdf_bytes = self._try_statements_page(page, year, month, out_path)
 
         if pdf_bytes is None:
             return None
@@ -300,7 +281,7 @@ class PaypalProvider(BaseProvider):
             return None
 
     def _try_statements_page(
-        self, page: Page, year: int, month: int, out_path: Path, stmt: dict
+        self, page: Page, year: int, month: int, out_path: Path
     ) -> bytes | None:
         """Fallback: Statements-Übersichtsseite → passenden Monat suchen."""
         try:
@@ -310,6 +291,14 @@ class PaypalProvider(BaseProvider):
             except Exception:
                 pass
             _sleep(2, 3)
+
+            if not _is_logged_in_url(page.url):
+                logger.warning(
+                    "PayPal: Session abgelaufen beim Zugriff auf Statements-Seite – "
+                    "bitte über noVNC neu einloggen. Aktuelle URL: %s",
+                    page.url,
+                )
+                return None
 
             month_name = _DE_MONTHS[month - 1]
             year_str = str(year)
@@ -331,10 +320,28 @@ class PaypalProvider(BaseProvider):
                     continue
 
             if not link:
+                # NICHT als dauerhaft fehlend markieren: wir können hier nicht
+                # zuverlässig unterscheiden zwischen "kein Auszug für diesen Monat"
+                # und "unsere Selektoren passen nicht zur aktuellen PayPal-Seite".
+                # Lieber erneut versuchen als einen echten Auszug für immer zu
+                # verlieren. Zur Diagnose: Linktexte auf der Seite loggen.
                 logger.info(
                     "Kein Auszug-Link für %04d/%02d auf Statements-Seite", year, month
                 )
-                stmt["_no_statement"] = True
+                try:
+                    all_links = page.evaluate(
+                        """
+                        () => [...document.querySelectorAll('a, button')]
+                            .map(el => (el.textContent || '').trim())
+                            .filter(t => t.length > 0)
+                            .slice(0, 40)
+                        """
+                    )
+                    logger.info(
+                        "DEBUG PayPal Statements-Seite Links/Buttons: %s", all_links
+                    )
+                except Exception as de:
+                    logger.debug("DEBUG-Dump fehlgeschlagen: %s", de)
                 return None
 
             try:
