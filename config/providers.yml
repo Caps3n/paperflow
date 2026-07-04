@@ -9,12 +9,15 @@ providers:
     # Paperless-Correspondent
     correspondent: "Amazon"
 
-  # PayPal: CDP-Modus mit manuellem Login (umgeht den Passkey-Dialog, der den
-  # vorherigen automatisierten Login blockiert hat)
-  paypal:
-    enabled: false
-    tags: ["PayPal", "Kontoauszug"]
-    correspondent: "PayPal"
+  # PayPal: aktuell nicht unterstützt. PayPal verlangt für den Berichte-Bereich
+  # (Kontoauszüge) bei jedem Zugriff eine frische 2FA-Bestätigung ("Step-up"),
+  # unabhängig vom normalen Login-Status, ganz ohne "Gerät merken"-Option.
+  # Das lässt sich nicht automatisieren (und sollte es auch nicht) – siehe
+  # CHANGELOG.
+  # paypal:
+  #   enabled: false
+  #   tags: ["PayPal", "Kontoauszug"]
+  #   correspondent: "PayPal"
 
   ikea:
     enabled: false

@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.03] - 2026-07-04
+
+### Removed
+- **PayPal provider** — not currently supported. After fixing the passkey-blocked automated login (reactivated via manual CDP login) and reworking the provider around PayPal's actual asynchronous report-generation flow, production testing found that PayPal requires a fresh 2FA step-up confirmation on *every single visit* to the account-statements/reports area, with no "remember this device" option, regardless of how recently the main account login happened. That can't be automated without defeating the point of 2FA, so the provider is removed again until there's a viable way around it. `app/providers/paypal.py` is deleted; its config section in `config/providers.yml` is commented out (with the reason) rather than deleted outright, so it's easy to pick back up.
+
+---
+
 ## [1.0.02] - 2026-07-04
 
 ### Fixed
