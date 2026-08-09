@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.06] - 2026-08-09
+
+No functional changes — version re-sync to match the tag published for this deployment.
+
+---
+
 ## [1.0.05] - 2026-08-09
 
 ### Fixed
