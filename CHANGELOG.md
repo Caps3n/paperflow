@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.04] - 2026-07-04
+
+### Added
+- **HP Instant Ink provider** — downloads individual invoice PDFs from the "Druck- und Zahlungsverlauf" (print/payment history) at `portal.hpsmart.com`, using the same manual CDP login as IKEA/Klarna. Deliberately downloads each row's own "Herunterladen" link rather than the page's "Alle Rechnungen herunterladen" button, which bundles the entire history into one combined PDF. Stops paginating once a page yields no new (not-yet-processed) invoices, since the history is sorted newest-first. The exact pagination control ("next page") is best-effort, since it wasn't visible in the screenshots used to build this — logs a diagnostic dump of the page's buttons/links if it doesn't match; the core row-parsing and per-invoice download were built directly against real screenshots of the actual page.
+
+---
+
 ## [1.0.03] - 2026-07-04
 
 ### Removed
