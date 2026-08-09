@@ -1,0 +1,10 @@
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+# Pin explicitly to ruff's historical default selection (Pyflakes + a pycodestyle
+# subset). Without this, an unpinned `pip install ruff` in CI can silently pick up
+# a newer ruff release with a broader default rule set (bugbear, flake8-async,
+# flake8-blind-except, bandit, ...) and start failing on pre-existing code that
+# was never written against those rules.
+select = ["E4", "E7", "E9", "F"]
