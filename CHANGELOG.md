@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.09] - 2026-08-09
+
+### Fixed
+- HP Instant Ink: 1.0.08's HTTP-fetch fix confirmed working in production (88 invoices downloaded in one run), but rows later in a page would intermittently fail with "Element is not attached to the DOM" — earlier downloads on the same page apparently cause the row list to re-render, invalidating the element references collected when the page was first scanned. Rows are now re-located (fresh element handle) immediately before each click instead of reusing the handle from the initial page scan.
+
+---
+
 ## [1.0.08] - 2026-08-09
 
 ### Fixed

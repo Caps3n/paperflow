@@ -193,7 +193,21 @@ class HpinstantinkProvider(BaseProvider):
                     continue
 
                 new_on_this_page += 1
-                pdf_path = self._download_row(page, row, invoice_id)
+
+                # Frisches ElementHandle statt der beim Seitenscan gesammelten
+                # Referenz: frühere Downloads auf derselben Seite können das
+                # DOM neu rendern und alte Handles ungültig machen (bestätigt
+                # durch Produktionslog: "Element is not attached to the DOM"
+                # bei späteren Zeilen nach mehreren erfolgreichen Downloads).
+                fresh_row = self._find_row(page, row["date_text"], row["row_text"])
+                if fresh_row is None:
+                    logger.warning(
+                        "Zeile für %s nach DOM-Änderung nicht mehr gefunden",
+                        invoice_id,
+                    )
+                    pdf_path = None
+                else:
+                    pdf_path = self._download_row(page, fresh_row, invoice_id)
                 if pdf_path and pdf_path.exists():
                     invoices.append(
                         Invoice(
@@ -303,6 +317,15 @@ class HpinstantinkProvider(BaseProvider):
             self._debug_dump(page, "Keine Verlauf-Zeilen gefunden")
 
         return rows
+
+    def _find_row(self, page: Page, date_text: str, row_text: str) -> dict | None:
+        """Sucht eine Zeile anhand von Datum + Zeilentext erneut, um ein
+        frisches (nicht-veraltetes) ElementHandle zu bekommen – siehe
+        _collect_invoices."""
+        for row in self._parse_rows(page):
+            if row["date_text"] == date_text and row["row_text"] == row_text:
+                return row
+        return None
 
     def _parse_date(self, date_text: str) -> str | None:
         """'28/07/2026' (DD/MM/YYYY) → '2026-07-28'."""
