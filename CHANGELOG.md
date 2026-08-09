@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.07] - 2026-08-09
+
+### Fixed
+- HP Instant Ink: every download timed out after 30s waiting for a download event, confirmed by a real production log (accordion fix from 1.0.05 worked — 11 pages detected, 10 rows found on page 1 — but every single row then failed to download). The "Herunterladen" link most likely opens a new tab that triggers the actual download itself, which the previous code never watched for. Now listens for a download event on both the current tab and any newly opened tab simultaneously, whichever fires first.
+
+---
+
 ## [1.0.06] - 2026-08-09
 
 No functional changes — version re-sync to match the tag published for this deployment.
