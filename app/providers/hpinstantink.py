@@ -313,12 +313,43 @@ class HpinstantinkProvider(BaseProvider):
             return None
 
     def _download_row(self, page: Page, row: dict, invoice_id: str) -> Path | None:
+        """Klickt den 'Herunterladen'-Link. Der Download kann entweder direkt
+        im aktuellen Tab ausgelöst werden oder – z.B. bei target='_blank' –
+        über einen neu geöffneten Tab, der dann selbst den Download auslöst.
+        Es wird auf beide Fälle gleichzeitig gewartet statt nur auf den
+        aktuellen Tab (production log zeigte konsequente 30s-Timeouts, was
+        auf den zweiten Fall hindeutet)."""
         out_path = self.download_dir / f"{invoice_id}.pdf"
+        dl_el: ElementHandle = row["download"]
+        context = page.context
+
+        found: dict = {}
+
+        def _on_download(dl):
+            found.setdefault("download", dl)
+
+        def _on_new_page(new_page):
+            found.setdefault("page", new_page)
+            try:
+                new_page.on("download", _on_download)
+            except Exception:
+                pass
+
+        page.on("download", _on_download)
+        context.on("page", _on_new_page)
         try:
-            dl_el: ElementHandle = row["download"]
-            with page.expect_download(timeout=30_000) as dl_info:
-                dl_el.click()
-            download = dl_info.value
+            dl_el.click()
+            deadline = time.time() + 30
+            while time.time() < deadline and "download" not in found:
+                time.sleep(0.25)
+
+            download = found.get("download")
+            if download is None:
+                logger.warning(
+                    "Download für %s: kein Download-Event nach 30s", invoice_id
+                )
+                return None
+
             download.save_as(str(out_path))
             if out_path.exists() and out_path.stat().st_size > 500:
                 candidate = out_path.read_bytes()
@@ -333,6 +364,19 @@ class HpinstantinkProvider(BaseProvider):
         except Exception as exc:
             logger.warning("Download für %s fehlgeschlagen: %s", invoice_id, exc)
             return None
+        finally:
+            try:
+                page.remove_listener("download", _on_download)
+                context.remove_listener("page", _on_new_page)
+            except Exception:
+                pass
+            new_page = found.get("page")
+            if new_page is not None and new_page != page:
+                try:
+                    if not new_page.is_closed():
+                        new_page.close()
+                except Exception:
+                    pass
 
     # ── Pagination ───────────────────────────────────────────────
 

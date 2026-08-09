@@ -1,2 +1,2 @@
-__version__ = "1.0.06"
+__version__ = "1.0.07"
 __name__ = "paperflow"
