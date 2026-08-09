@@ -313,70 +313,68 @@ class HpinstantinkProvider(BaseProvider):
             return None
 
     def _download_row(self, page: Page, row: dict, invoice_id: str) -> Path | None:
-        """Klickt den 'Herunterladen'-Link. Der Download kann entweder direkt
-        im aktuellen Tab ausgelöst werden oder – z.B. bei target='_blank' –
-        über einen neu geöffneten Tab, der dann selbst den Download auslöst.
-        Es wird auf beide Fälle gleichzeitig gewartet statt nur auf den
-        aktuellen Tab (production log zeigte konsequente 30s-Timeouts, was
-        auf den zweiten Fall hindeutet)."""
+        """Klickt den 'Herunterladen'-Link. Bestätigt per Screenshot: das
+        öffnet einen neuen Tab, der direkt zu einer PDF-URL navigiert
+        (instantink.hpconnected.com/api/dashboard/.../pdf?key=...). Chrome
+        zeigt PDFs mit seinem eingebauten Viewer an statt sie herunterzuladen
+        – dabei feuert KEIN Playwright-'download'-Event (bestätigt durch
+        Produktions-Logs: 30s-Timeout trotz Download-Event-Listener auf
+        beiden Tabs). Deshalb: neuen Tab abfangen, seine finale URL auslesen,
+        und die PDF-Bytes direkt per HTTP-Request holen (geteilter
+        Browser-Context, also inkl. Cookies/Session) statt auf einen Download
+        zu warten."""
         out_path = self.download_dir / f"{invoice_id}.pdf"
         dl_el: ElementHandle = row["download"]
         context = page.context
 
-        found: dict = {}
+        try:
+            with context.expect_page(timeout=15_000) as new_page_info:
+                dl_el.click()
+            new_page = new_page_info.value
+        except Exception as exc:
+            logger.warning("Kein neuer Tab beim Download von %s: %s", invoice_id, exc)
+            return None
 
-        def _on_download(dl):
-            found.setdefault("download", dl)
-
-        def _on_new_page(new_page):
-            found.setdefault("page", new_page)
+        try:
             try:
-                new_page.on("download", _on_download)
+                new_page.wait_for_load_state("load", timeout=15_000)
             except Exception:
                 pass
-
-        page.on("download", _on_download)
-        context.on("page", _on_new_page)
-        try:
-            dl_el.click()
-            deadline = time.time() + 30
-            while time.time() < deadline and "download" not in found:
-                time.sleep(0.25)
-
-            download = found.get("download")
-            if download is None:
-                logger.warning(
-                    "Download für %s: kein Download-Event nach 30s", invoice_id
-                )
-                return None
-
-            download.save_as(str(out_path))
-            if out_path.exists() and out_path.stat().st_size > 500:
-                candidate = out_path.read_bytes()
-                if candidate[:4] == b"%PDF":
-                    logger.info(
-                        "Rechnung gespeichert: %s (%d bytes)",
-                        out_path.name,
-                        len(candidate),
-                    )
-                    return out_path
-            return None
-        except Exception as exc:
-            logger.warning("Download für %s fehlgeschlagen: %s", invoice_id, exc)
-            return None
+            pdf_url = new_page.url
         finally:
             try:
-                page.remove_listener("download", _on_download)
-                context.remove_listener("page", _on_new_page)
+                new_page.close()
             except Exception:
                 pass
-            new_page = found.get("page")
-            if new_page is not None and new_page != page:
-                try:
-                    if not new_page.is_closed():
-                        new_page.close()
-                except Exception:
-                    pass
+
+        if not pdf_url or pdf_url == "about:blank":
+            logger.warning("Kein PDF-URL im neuen Tab für %s gefunden", invoice_id)
+            return None
+
+        try:
+            response = context.request.get(pdf_url)
+        except Exception as exc:
+            logger.warning("PDF-Request fehlgeschlagen für %s: %s", invoice_id, exc)
+            return None
+
+        if not response.ok:
+            logger.warning(
+                "PDF-Request fehlgeschlagen für %s: HTTP %d",
+                invoice_id,
+                response.status,
+            )
+            return None
+
+        candidate = response.body()
+        if len(candidate) > 500 and candidate[:4] == b"%PDF":
+            out_path.write_bytes(candidate)
+            logger.info(
+                "Rechnung gespeichert: %s (%d bytes)", out_path.name, len(candidate)
+            )
+            return out_path
+
+        logger.warning("Download für %s: Antwort ist kein gültiges PDF", invoice_id)
+        return None
 
     # ── Pagination ───────────────────────────────────────────────
 

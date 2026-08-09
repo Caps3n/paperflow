@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.08] - 2026-08-09
+
+### Fixed
+- HP Instant Ink: 1.0.07's download-event listener still timed out — confirmed by both a production log and a user screenshot showing the real cause: the new tab navigates straight to a PDF URL that Chrome's built-in viewer *displays* rather than downloads, so no Playwright `download` event ever fires on either tab. Now captures the new tab's URL directly and fetches the PDF bytes over HTTP through the shared browser context (cookies/session included) instead of waiting for a download event at all.
+
+---
+
 ## [1.0.07] - 2026-08-09
 
 ### Fixed
