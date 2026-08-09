@@ -127,6 +127,7 @@ class HpinstantinkProvider(BaseProvider):
                     return []
 
                 logger.info("HP Instant Ink: Eingeloggt – starte Verlauf-Scan")
+                self._expand_history_section(page)
                 invoices = self._collect_invoices(page)
 
             except Exception:
@@ -136,6 +137,33 @@ class HpinstantinkProvider(BaseProvider):
                 # Browser NICHT schließen – Session bleibt erhalten
 
         return invoices
+
+    # ── Verlauf-Bereich aufklappen ──────────────────────────────────
+
+    def _expand_history_section(self, page: Page) -> None:
+        """Der 'Druck- und Zahlungsverlauf'-Bereich ist standardmäßig als
+        Akkordion eingeklappt – die Tabelle (und die 'X von Y'-Seitenzahl)
+        erscheint erst nach einem Klick auf den Abschnitts-Header. Es gibt
+        zusätzlich einen gleichnamigen Link im Seitenmenü, deshalb gezielt
+        nach dem Button (nicht dem Link) suchen."""
+        try:
+            section_btn = page.query_selector(
+                "button:has-text('Druck- und Zahlungsverlauf')"
+            )
+            if not section_btn:
+                logger.warning(
+                    "Akkordion-Button 'Druck- und Zahlungsverlauf' nicht gefunden"
+                )
+                self._debug_dump(page, "Akkordion-Button nicht gefunden")
+                return
+            section_btn.click()
+            _sleep(1, 2)
+            try:
+                page.wait_for_load_state("networkidle", timeout=10_000)
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.warning("Verlauf-Bereich konnte nicht aufgeklappt werden: %s", exc)
 
     # ── Scan-Logik ─────────────────────────────────────────────────
 
