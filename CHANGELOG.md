@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.05] - 2026-08-09
+
+### Fixed
+- HP Instant Ink: the "Druck- und Zahlungsverlauf" section is a collapsed accordion by default — its invoice table (and the "X von Y" pagination count) only rendered after clicking the section header, which the provider never did. Confirmed from a real production log (0 rows found, 1 page detected) and its diagnostic dump. Now clicks the section's button right after the login check, before parsing anything.
+- CI: `ruff` was installed unpinned, so a newer ruff release could silently ship a broader default rule set and start failing on pre-existing code. Added `pyproject.toml` pinning `[tool.ruff.lint] select` to ruff's prior default (E4, E7, E9, F) so this can't drift again on a future ruff upgrade.
+
+---
+
 ## [1.0.04] - 2026-07-04
 
 ### Added
