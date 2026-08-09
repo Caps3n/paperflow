@@ -29,6 +29,11 @@ providers:
     tags: ["Klarna", "Kaufbeleg"]
     correspondent: "Klarna"
 
+  hpinstantink:
+    enabled: false
+    tags: ["HP Instant Ink", "Rechnung"]
+    correspondent: "HP"
+
   # Weitere Provider können hier hinzugefügt werden:
   # ebay:
   #   enabled: false

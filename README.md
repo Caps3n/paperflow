@@ -2,7 +2,7 @@
 
 **Automatically fetch invoices from online providers and import them into [Paperless-NGX](https://github.com/paperless-ngx/paperless-ngx).**
 
-![Version](https://img.shields.io/badge/version-1.0.03-blue)
+![Version](https://img.shields.io/badge/version-1.0.04-blue)
 ![Status](https://img.shields.io/badge/status-pre--release-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)
@@ -20,7 +20,7 @@ A built-in **web interface** (port `8085`) lets you configure everything, manage
 
 ## ✨ Features
 
-- **Automatic invoice download** from Amazon.de / Amazon.com, IKEA, and Klarna
+- **Automatic invoice download** from Amazon.de / Amazon.com, IKEA, Klarna, and HP Instant Ink
 - **PDF & image receipts** — accepts JPG receipts for older orders (e.g. IKEA) in addition to PDF, with the correct upload content type
 - **Paperless-NGX upload** via REST API — sets tags, correspondent, date, and title automatically
 - **Product title extraction** — Paperless title shows the actual product name, not just the order number
@@ -143,12 +143,12 @@ paperflow connects to Chrome over CDP (Chrome DevTools Protocol), uses the live 
 
 ---
 
-## 🔐 Browser Login (Amazon, IKEA & Klarna)
+## 🔐 Browser Login (Amazon, IKEA, Klarna & HP Instant Ink)
 
 paperflow uses a persistent Chrome browser (`paperflow-chrome`) so you only log in once:
 
 1. Open **http://\<server\>:6080** in your browser (noVNC web UI)
-2. Log into Amazon, IKEA, or Klarna — including any 2FA prompts
+2. Log into Amazon, IKEA, Klarna, or the HP Smart portal (portal.hpsmart.com) — including any 2FA prompts
 3. Start a scan from the web UI — your session is reused automatically
 
 **Alternative — Cookie import (no VNC needed):**
@@ -225,6 +225,7 @@ paperflow/
 
 ## 🛣️ Roadmap
 
+- [x] HP Instant Ink provider (individual invoice PDFs from the print/payment history)
 - [ ] PayPal provider — **not currently supported.** Tried twice: first blocked by an automated-login passkey dialog, then (after switching to manual CDP login like IKEA/Klarna) blocked by a step-up 2FA check that PayPal requires on every single visit to the account-statements/reports area, with no "remember this device" option. That can't be automated without defeating the purpose of 2FA, so PayPal is on hold until there's a viable way around it.
 - [ ] eBay provider
 - [ ] Email/IMAP provider (catch invoices sent by email)
