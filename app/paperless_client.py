@@ -113,6 +113,14 @@ class PaperlessClient:
             )
             r.raise_for_status()
             return r.json()["id"]
+        except requests.HTTPError as e:
+            logger.warning(
+                "Tag '%s' konnte nicht gesetzt werden: %s – %s",
+                name,
+                e,
+                e.response.text[:300] if e.response is not None else "",
+            )
+            return None
         except Exception as e:
             logger.warning("Tag '%s' konnte nicht gesetzt werden: %s", name, e)
             return None
@@ -137,6 +145,14 @@ class PaperlessClient:
             )
             r.raise_for_status()
             return r.json()["id"]
+        except requests.HTTPError as e:
+            logger.warning(
+                "Korrespondent '%s' nicht gesetzt: %s – %s",
+                name,
+                e,
+                e.response.text[:300] if e.response is not None else "",
+            )
+            return None
         except Exception as e:
             logger.warning("Korrespondent '%s' nicht gesetzt: %s", name, e)
             return None

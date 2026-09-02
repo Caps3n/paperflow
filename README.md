@@ -2,7 +2,7 @@
 
 **Automatically fetch invoices from online providers and import them into [Paperless-NGX](https://github.com/paperless-ngx/paperless-ngx).**
 
-![Version](https://img.shields.io/badge/version-1.0.10-blue)
+![Version](https://img.shields.io/badge/version-1.0.11-blue)
 ![Status](https://img.shields.io/badge/status-pre--release-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)
