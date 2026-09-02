@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.10] - 2026-09-02
+
+### Fixed
+- Klarna: purchases stopped showing up entirely (all discovery strategies found 0 transactions) after Klarna moved the purchase list from `/manage-payments` to a new `/manage-payments/purchases-and-returns` page — confirmed via real screenshots. Transaction detail URLs are unaffected (still `/manage-payments/transactions/internal/...`), so this is a one-line navigation fix: point the scanner at the new list URL while keeping the existing detail-URL base and download flow (still a `blob:` PDF opened via the same "..." → "Auszug herunterladen" menu, already handled by the existing code) unchanged.
+
+---
+
 ## [1.0.09] - 2026-08-09
 
 ### Fixed

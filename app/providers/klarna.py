@@ -40,6 +40,11 @@ logger = logging.getLogger("provider.klarna")
 
 LOGIN_URL = "https://app.klarna.com/"
 MANAGE_PAYMENTS_URL = "https://app.klarna.com/manage-payments"
+# Klarna hat die Käufe-Liste umgebaut: sie lebt jetzt unter einem eigenen
+# Unterpfad statt direkt unter /manage-payments (bestätigt per Screenshot,
+# 2026-09). Transaktions-Detail-URLs bleiben weiterhin direkt unter
+# /manage-payments/transactions/... – deshalb zwei getrennte Konstanten.
+PURCHASES_LIST_URL = "https://app.klarna.com/manage-payments/purchases-and-returns"
 
 _CDP_URL = os.environ.get("CHROME_CDP_URL", "").strip()
 
@@ -298,10 +303,10 @@ class KlarnaProvider(BaseProvider):
 
     def _parse_transactions(self, page: Page) -> list[dict]:
         """
-        Liest alle Transaktionen von /manage-payments.
+        Liest alle Transaktionen von /manage-payments/purchases-and-returns.
         Sucht nach <a href*='transactions/internal'> Links (React Router rendert diese als <a>).
         """
-        page.goto(MANAGE_PAYMENTS_URL, timeout=30_000)
+        page.goto(PURCHASES_LIST_URL, timeout=30_000)
         try:
             page.wait_for_load_state("networkidle", timeout=20_000)
         except Exception:
@@ -312,8 +317,9 @@ class KlarnaProvider(BaseProvider):
         # /manage-payments). Früh abbrechen statt 60s durch alle Strategien zu laufen.
         if not _is_logged_in_url(page.url):
             logger.warning(
-                "Klarna: Session für /manage-payments abgelaufen – bitte über "
+                "Klarna: Session für %s abgelaufen – bitte über "
                 "noVNC neu einloggen. Aktuelle URL: %s",
+                PURCHASES_LIST_URL,
                 page.url,
             )
             return []
@@ -549,7 +555,7 @@ class KlarnaProvider(BaseProvider):
                 "Keine Transaktionen gefunden auf %s\n"
                 "Prüfe ob der Browser eingeloggt ist und die Seite Transaktionen enthält.\n"
                 "Aktueller URL: %s",
-                MANAGE_PAYMENTS_URL,
+                PURCHASES_LIST_URL,
                 page.url,
             )
             # DEBUG: HTML-Ausschnitt loggen damit wir die Seitenstruktur sehen
