@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.11] - 2026-09-02
+
+### Changed
+- Paperless client: `_get_or_create_correspondent()` and `_get_or_create_tag()` now log the response body on an HTTP error, not just the status line — confirmed from a real production log showing "Korrespondent 'Klarna' nicht gesetzt: 400 Client Error" on every single upload with no indication of the actual cause (upload itself still succeeds; only the correspondent assignment is skipped). The next occurrence's log will show Paperless's actual error detail instead of a bare "Bad Request", needed before this can be root-caused and fixed properly.
+
+---
+
 ## [1.0.10] - 2026-09-02
 
 ### Fixed
