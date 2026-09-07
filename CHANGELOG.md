@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.12] - 2026-09-02
+
+### Fixed
+- IKEA and Klarna: browser downloads triggered via Playwright's `expect_download()` left Chrome's own copy of the file behind (generic hash-named PDFs, visible in the browser's own download tray via noVNC — confirmed by a user screenshot) even after we'd already saved our own copy under the real filename. Across many automated runs these accumulate unbounded in the persisted Chrome profile volume. Both now call `download.delete()` right after extracting the file contents. HP Instant Ink is unaffected — it already fetches PDFs via a direct HTTP request instead of a browser download (since 1.0.08).
+
+---
+
 ## [1.0.11] - 2026-09-02
 
 ### Changed
