@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.13] - 2026-09-07
+
+### Fixed
+- IKEA: the two most recent orders' receipts now come as `blob:` URLs instead of a real download or `data:` URL — confirmed by a production log (`No connection adapters were found for 'blob:...'`, since `requests` can't fetch a `blob:` scheme at all, and `download.save_as()` produces no usable bytes for a blob-triggered download over CDP either). Reused the same "read the blob via an in-page XHR" technique already working for Klarna's near-identical `blob:` case instead of the `requests`-based HTTP fallback, which can never work for this URL scheme.
+
+---
+
 ## [1.0.12] - 2026-09-02
 
 ### Fixed

@@ -374,6 +374,53 @@ class IkeaProvider(BaseProvider):
                             logger.warning(
                                 "Data-URL Dekodierung fehlgeschlagen: %s", de
                             )
+                    elif download.url.startswith("blob:"):
+                        # requests kann keine blob:-URLs laden ("No connection
+                        # adapters"), und download.save_as() liefert für
+                        # blob:-Downloads über CDP keine brauchbaren Bytes
+                        # (dasselbe Problem wie bei Klarna) – stattdessen die
+                        # Bytes per XHR direkt in der Seite lesen, wo der Blob
+                        # erzeugt wurde.
+                        try:
+                            b64 = page.evaluate(
+                                """async (blobUrl) => {
+                                    return new Promise((resolve) => {
+                                        const xhr = new XMLHttpRequest();
+                                        xhr.open('GET', blobUrl, true);
+                                        xhr.responseType = 'arraybuffer';
+                                        xhr.onload = function() {
+                                            const arr = new Uint8Array(this.response);
+                                            let s = '';
+                                            const chunk = 8192;
+                                            for (let i = 0; i < arr.length; i += chunk) {
+                                                s += String.fromCharCode.apply(
+                                                    null, arr.subarray(i, i + chunk));
+                                            }
+                                            resolve(btoa(s));
+                                        };
+                                        xhr.onerror = () => resolve(null);
+                                        xhr.send();
+                                    });
+                                }""",
+                                download.url,
+                            )
+                            if b64:
+                                candidate = _base64.b64decode(b64)
+                                ext = _detect_ext(candidate)
+                                if ext:
+                                    file_bytes = candidate
+                                    logger.info(
+                                        "Blob-URL gelesen: %d bytes (%s)",
+                                        len(candidate),
+                                        ext,
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Blob-URL kein PDF/JPG (magic: %s)",
+                                        candidate[:4],
+                                    )
+                        except Exception as de:
+                            logger.warning("Blob-URL Lesen fehlgeschlagen: %s", de)
                     else:
                         # Normaler HTTP-Download: save_as() versuchen
                         download.save_as(str(tmp_path))
