@@ -985,6 +985,15 @@ class KlarnaProvider(BaseProvider):
                             pdf_bytes = candidate
                     if pdf_bytes is None:
                         pdf_bytes = _fetch_pdf_from_url(download.url)
+                # Chrome behält im CDP-Container eine eigene Kopie des
+                # Downloads (mit generischem Hash-Namen) – die häuft sich
+                # über viele automatisierte Läufe unbegrenzt im persistierten
+                # Chrome-Profil an. Wir haben unsere eigene Kopie (pdf_bytes)
+                # bereits, also aufräumen.
+                try:
+                    download.delete()
+                except Exception:
+                    pass
             except Exception as exc:
                 logger.warning("Download-Fehler (Strategie B) für %s: %s", txn_id, exc)
 

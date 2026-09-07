@@ -423,6 +423,16 @@ class IkeaProvider(BaseProvider):
                             except Exception as de:
                                 logger.warning("HTTP-Fallback Fehler: %s", de)
 
+                    # Chrome behält im CDP-Container eine eigene Kopie des
+                    # Downloads (mit generischem Hash-Namen) – die häuft sich
+                    # über viele automatisierte Läufe unbegrenzt im
+                    # persistierten Chrome-Profil an. Wir haben unsere eigene
+                    # Kopie (file_bytes) bereits, also aufräumen.
+                    try:
+                        download.delete()
+                    except Exception:
+                        pass
+
                     if file_bytes is None or ext is None:
                         logger.warning("Kein gültiges PDF/JPG für %s", order["id"])
                         return None
