@@ -34,6 +34,11 @@ providers:
     tags: ["HP Instant Ink", "Rechnung"]
     correspondent: "HP"
 
+  ollama:
+    enabled: false
+    tags: ["Ollama", "Rechnung"]
+    correspondent: "Ollama"
+
   # Weitere Provider können hier hinzugefügt werden:
   # ebay:
   #   enabled: false

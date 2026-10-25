@@ -2,7 +2,7 @@
 
 **Automatically fetch invoices from online providers and import them into [Paperless-NGX](https://github.com/paperless-ngx/paperless-ngx).**
 
-![Version](https://img.shields.io/badge/version-1.0.17-blue)
+![Version](https://img.shields.io/badge/version-1.0.18-blue)
 ![Status](https://img.shields.io/badge/status-pre--release-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)
@@ -20,7 +20,7 @@ A built-in **web interface** (port `8085`) lets you configure everything, manage
 
 ## ✨ Features
 
-- **Automatic invoice download** from Amazon.de / Amazon.com, IKEA, Klarna, and HP Instant Ink
+- **Automatic invoice download** from Amazon.de / Amazon.com, IKEA, Klarna, HP Instant Ink, and Ollama
 - **PDF & image receipts** — accepts JPG receipts for older orders (e.g. IKEA) in addition to PDF, with the correct upload content type
 - **Paperless-NGX upload** via REST API — sets tags, correspondent, date, and title automatically
 - **Product title extraction** — Paperless title shows the actual product name, not just the order number
@@ -81,7 +81,7 @@ docker compose up -d
 
 Open the web interface at **http://localhost:8085**
 
-On first run, open the browser at **http://localhost:6080** (noVNC), log into Amazon, IKEA, Klarna, or HP Instant Ink manually once — the session is then reused automatically.
+On first run, open the browser at **http://localhost:6080** (noVNC), log into Amazon, IKEA, Klarna, HP Instant Ink, or Ollama manually once — the session is then reused automatically.
 
 ---
 
@@ -93,6 +93,7 @@ On first run, open the browser at **http://localhost:6080** (noVNC), log into Am
 | **IKEA** | In-store and online receipts (PDF, older ones as JPG) | `IKEA_MONTHS_BACK` limits the range |
 | **Klarna** | Purchase statements ("Auszug herunterladen") | Loads the **entire** purchase history (see below) |
 | **HP Instant Ink** | Individual monthly invoices from the print/payment history ("Druck- und Zahlungsverlauf") | Opens the history page via the menu and walks all pages |
+| **Ollama** | Subscription invoices from ollama.com (Settings → Billing → Invoices) | Only paid invoices; each invoice's Stripe ID (`in_…`) is used to avoid duplicates |
 | ~~PayPal~~ | — | Not supported (step-up 2FA, see Roadmap) |
 
 Each provider can be limited to recent years via **Providers → Scan from year** in the web UI (empty = all years).
@@ -176,12 +177,12 @@ paperflow connects to Chrome over CDP (Chrome DevTools Protocol), uses the live 
 
 ---
 
-## 🔐 Browser Login (Amazon, IKEA, Klarna & HP Instant Ink)
+## 🔐 Browser Login (Amazon, IKEA, Klarna, HP Instant Ink & Ollama)
 
 paperflow uses a persistent Chrome browser (`paperflow-chrome`) so you only log in once:
 
 1. Open **http://\<server\>:6080** in your browser (noVNC web UI)
-2. Log into Amazon, IKEA, Klarna, or the HP Smart portal (portal.hpsmart.com) — including any 2FA prompts
+2. Log into Amazon, IKEA, Klarna, the HP Smart portal (portal.hpsmart.com), or ollama.com — including any 2FA prompts
 3. Start a scan from the web UI — your session is reused automatically
 
 **Alternative — Cookie import (no VNC needed):**
@@ -242,7 +243,8 @@ paperflow/
 │       ├── amazon.py        # Amazon provider (CDP mode + fallback)
 │       ├── ikea.py          # IKEA provider (CDP mode + cookie import)
 │       ├── klarna.py        # Klarna provider (CDP mode, full purchase history)
-│       └── hpinstantink.py  # HP Instant Ink provider (CDP mode, monthly invoices)
+│       ├── hpinstantink.py  # HP Instant Ink provider (CDP mode, monthly invoices)
+│       └── ollama.py        # Ollama provider (CDP mode, subscription invoices)
 ├── chrome-desktop/          # Chrome + noVNC Docker image (paperflow-chrome)
 │   ├── Dockerfile
 │   └── start.sh
@@ -260,6 +262,7 @@ paperflow/
 ## 🛣️ Roadmap
 
 - [x] HP Instant Ink provider (individual invoice PDFs from the print/payment history)
+- [x] Ollama provider (subscription invoices from ollama.com)
 - [ ] PayPal provider — **not currently supported.** Tried twice: first blocked by an automated-login passkey dialog, then (after switching to manual CDP login like IKEA/Klarna) blocked by a step-up 2FA check that PayPal requires on every single visit to the account-statements/reports area, with no "remember this device" option. That can't be automated without defeating the purpose of 2FA, so PayPal is on hold until there's a viable way around it.
 - [ ] eBay provider
 - [ ] Email/IMAP provider (catch invoices sent by email)
