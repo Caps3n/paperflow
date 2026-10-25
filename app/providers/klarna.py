@@ -313,6 +313,7 @@ class KlarnaProvider(BaseProvider):
     # Runden ohne neuen Eintrag, bevor die Liste als vollständig gilt
     _STABLE_ROUNDS = 4
     _MAX_TRANSACTIONS = 2000
+    _useless_load_more: set[str] = set()
 
     def _count_list_items(self, page: Page) -> int:
         try:
@@ -323,18 +324,59 @@ class KlarnaProvider(BaseProvider):
         except Exception:
             return 0
 
-    def _click_load_more(self, page: Page) -> bool:
+    # Popups, die die Seite sperren (body[data-scroll-lock]) und Klicks auf die
+    # Liste abfangen – z.B. "Verfolge deine Lieferungen … E-Mail-Adresse
+    # verknüpfen / Später" (bestätigt per Produktionslog, 2026-10).
+    _DISMISS_SELECTORS = [
+        # text-is = exakter Text, damit z.B. "Später bezahlen" nicht matcht
+        "button:text-is('Später')",
+        "button:text-is('Nicht jetzt')",
+        "button:text-is('Jetzt nicht')",
+        "button[aria-label*='Schließen']",
+        "button[aria-label*='schließen']",
+        "button[aria-label*='Close']",
+        "button[aria-label*='close']",
+    ]
+
+    def _dismiss_overlays(self, page: Page) -> None:
+        for sel in self._DISMISS_SELECTORS:
+            try:
+                btn = page.query_selector(sel)
+                if btn and btn.is_visible():
+                    btn.click(timeout=3_000)
+                    logger.info("Klarna: Popup geschlossen (%s)", sel)
+                    _sleep(0.5, 1.0)
+            except Exception:
+                continue
+        try:
+            locked = page.evaluate(
+                "() => document.body && document.body.dataset.scrollLock === 'true'"
+            )
+            if locked:
+                page.keyboard.press("Escape")
+                _sleep(0.5, 1.0)
+                if page.evaluate("() => document.body.dataset.scrollLock === 'true'"):
+                    logger.warning(
+                        "Klarna: Seite ist weiterhin durch ein Popup gesperrt – "
+                        "bitte über noVNC prüfen und das Popup einmal schließen"
+                    )
+        except Exception:
+            pass
+
+    def _click_load_more(self, page: Page, skip: set[str]) -> str | None:
         for sel in self._LOAD_MORE_SELECTORS:
+            if sel in skip:
+                continue
             try:
                 btn = page.query_selector(sel)
                 if btn and btn.is_visible():
                     logger.info("Klicke 'Mehr laden' (%s)", sel)
                     btn.scroll_into_view_if_needed()
-                    btn.click()
-                    return True
+                    btn.click(timeout=5_000)
+                    return sel
             except Exception:
                 continue
-        return False
+        return None
 
     def _scroll_to_end(self, page: Page) -> None:
         """Scrollt Fenster und alle scrollbaren Container ans Ende (Infinite Scroll)."""
@@ -372,11 +414,16 @@ class KlarnaProvider(BaseProvider):
         """
         count = self._count_list_items(page)
         stable = 0
+        # Buttons wie "Mehr anzeigen", die nichts nachladen (gehören zu einem
+        # anderen Bereich der Seite), nicht endlos weiterklicken – und vor allem
+        # nicht statt zu scrollen.
+        useless = self._useless_load_more
         for _ in range(self._MAX_LOAD_ROUNDS):
             if min_count is not None and count >= min_count:
                 return count, False
-            if not self._click_load_more(page):
-                self._scroll_to_end(page)
+            self._dismiss_overlays(page)
+            clicked = self._click_load_more(page, useless)
+            self._scroll_to_end(page)
             _sleep(1.0, 1.8)
             try:
                 page.wait_for_load_state("networkidle", timeout=5_000)
@@ -389,13 +436,19 @@ class KlarnaProvider(BaseProvider):
                 count = new_count
                 stable = 0
             else:
+                if clicked:
+                    useless.add(clicked)
                 stable += 1
                 if stable >= self._STABLE_ROUNDS:
                     return count, True
         return count, False
 
     def _log_oldest_entry(self, page: Page) -> None:
-        """Loggt den letzten (ältesten) Listeneintrag zur Kontrolle."""
+        """Loggt den letzten (ältesten) Listeneintrag samt Datums-Überschrift.
+
+        Die Einträge selbst zeigen nur die Uhrzeit – das Datum steht als
+        Gruppen-Überschrift darüber, deshalb rückwärts danach suchen.
+        """
         try:
             last = page.locator(f"{self._TXN_BUTTON_SEL}, {self._TXN_LINK_SEL}").last
             text = " · ".join(
@@ -403,6 +456,25 @@ class KlarnaProvider(BaseProvider):
                 for t in last.inner_text(timeout=3_000).split("\n")
                 if t.strip()
             )
+            heading = last.evaluate(r"""
+                el => {
+                    const re = /(\d{1,2}\.\s*[A-Za-zÄÖÜäöü]{3,}|\b(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\b|\d{2}\.\d{2}\.\d{4}|Heute|Gestern)/i;
+                    const walker = document.createTreeWalker(
+                        document.body, NodeFilter.SHOW_TEXT
+                    );
+                    let found = null;
+                    while (walker.nextNode()) {
+                        const node = walker.currentNode;
+                        if (el.contains(node)) break;
+                        if (el.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) break;
+                        const t = node.textContent.trim();
+                        if (t.length > 0 && t.length < 40 && re.test(t)) found = t;
+                    }
+                    return found;
+                }
+            """)
+            if heading:
+                text = f"{heading} · {text}"
             logger.info("Klarna: Ältester geladener Eintrag: %s", text[:120])
         except Exception:
             pass
@@ -461,7 +533,9 @@ class KlarnaProvider(BaseProvider):
             except Exception:
                 continue
         _sleep(2, 3)
+        self._dismiss_overlays(page)
 
+        self._useless_load_more = set()
         total, complete = self._load_full_list(page)
         if complete:
             logger.info("Klarna: Liste vollständig geladen – %d Einträge", total)
@@ -586,8 +660,10 @@ class KlarnaProvider(BaseProvider):
                 logger.info("Strategie 2b: %d €-Buttons gefunden", button_count)
 
                 captured: list[str] = []
+                click_errors = 0
                 i = 0
                 while i < self._MAX_TRANSACTIONS:
+                    self._dismiss_overlays(page)
                     btns = page.locator(self._TXN_BUTTON_SEL)
                     # Nach go_back() rendert Klarna oft nur die erste Seite neu →
                     # bis zum aktuellen Index nachladen, sonst endet der Scan bei ~20.
@@ -603,18 +679,28 @@ class KlarnaProvider(BaseProvider):
                         urls = page.evaluate(
                             "() => (window.__klarna_captured_urls || []).splice(0)"
                         )
-                        if not urls and "transactions/internal" in page.url:
+                        navigated = "transactions/internal" in page.url
+                        if not urls and navigated:
                             urls = [page.url]
                         captured.extend(urls)
-                        page.go_back()
-                        try:
-                            page.wait_for_selector(self._TXN_BUTTON_SEL, timeout=5_000)
-                        except Exception:
-                            pass
-                        _sleep(0.5, 1.0)
+                        # Nur zurück, wenn der Klick wirklich zur Detailseite
+                        # geführt hat – sonst landet go_back() auf der Startseite.
+                        if urls or navigated:
+                            page.go_back()
+                            try:
+                                page.wait_for_selector(
+                                    self._TXN_BUTTON_SEL, timeout=5_000
+                                )
+                            except Exception:
+                                pass
+                            _sleep(0.5, 1.0)
                     except Exception as exc:
-                        logger.debug(
-                            "Strategie 2b: Eintrag %d fehlgeschlagen: %s", i, exc
+                        click_errors += 1
+                        log = logger.warning if click_errors <= 3 else logger.debug
+                        log(
+                            "Strategie 2b: Klick auf Eintrag %d fehlgeschlagen: %s",
+                            i,
+                            str(exc).splitlines()[0][:200],
                         )
                     if "purchases-and-returns" not in page.url:
                         # Volle Navigation statt SPA-Zurück → Interceptor ist weg

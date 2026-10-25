@@ -49,7 +49,7 @@ REPORTS_URL = "https://portal.hpsmart.com/de/de/print_plans/account_history"
 
 _CDP_URL = os.environ.get("CHROME_CDP_URL", "").strip()
 
-_DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
+_DATE_RE = re.compile(r"^\d{2}[/.]\d{2}[/.]\d{4}$")
 _TOTAL_RE = re.compile(r"of\s+(\d+)", re.IGNORECASE)
 
 
@@ -146,24 +146,44 @@ class HpinstantinkProvider(BaseProvider):
         erscheint erst nach einem Klick auf den Abschnitts-Header. Es gibt
         zusätzlich einen gleichnamigen Link im Seitenmenü, deshalb gezielt
         nach dem Button (nicht dem Link) suchen."""
+        if self._history_rows_visible(page, timeout=5_000):
+            return
         try:
             section_btn = page.query_selector(
                 "button:has-text('Druck- und Zahlungsverlauf')"
             )
-            if not section_btn:
-                logger.warning(
-                    "Akkordion-Button 'Druck- und Zahlungsverlauf' nicht gefunden"
-                )
-                self._debug_dump(page, "Akkordion-Button nicht gefunden")
-                return
-            section_btn.click()
+            if section_btn:
+                section_btn.click()
+            else:
+                # HP hat das Akkordion entfernt (Produktionslog 2026-10): der
+                # Verlauf ist jetzt eine eigene Seite hinter dem Menü-Link.
+                link = page.query_selector("a:has-text('Druck- und Zahlungsverlauf')")
+                if not link:
+                    logger.warning(
+                        "Weder Akkordion noch Menü-Link 'Druck- und "
+                        "Zahlungsverlauf' gefunden"
+                    )
+                    self._debug_dump(page, "Verlauf-Bereich nicht gefunden")
+                    return
+                logger.info("HP Instant Ink: öffne Verlauf über den Menü-Link")
+                link.click()
             _sleep(1, 2)
             try:
                 page.wait_for_load_state("networkidle", timeout=10_000)
             except Exception:
                 pass
+            self._history_rows_visible(page, timeout=20_000)
         except Exception as exc:
             logger.warning("Verlauf-Bereich konnte nicht aufgeklappt werden: %s", exc)
+
+    @staticmethod
+    def _history_rows_visible(page: Page, timeout: int) -> bool:
+        """Wartet, bis die Verlauf-Tabelle (mit 'Herunterladen'-Links) da ist."""
+        try:
+            page.wait_for_selector("text=Herunterladen", timeout=timeout)
+            return True
+        except Exception:
+            return False
 
     # ── Scan-Logik ─────────────────────────────────────────────────
 
@@ -276,7 +296,9 @@ class HpinstantinkProvider(BaseProvider):
         gelaufen wird bis eine Zeile mit einem 'Herunterladen'-Link gefunden ist."""
         rows: list[dict] = []
         try:
-            date_els = page.query_selector_all("text=/^\\d{2}\\/\\d{2}\\/\\d{4}$/")
+            date_els = page.query_selector_all(
+                "text=/^\\d{2}[\\/.]\\d{2}[\\/.]\\d{4}$/"
+            )
         except Exception:
             date_els = []
 
@@ -328,9 +350,9 @@ class HpinstantinkProvider(BaseProvider):
         return None
 
     def _parse_date(self, date_text: str) -> str | None:
-        """'28/07/2026' (DD/MM/YYYY) → '2026-07-28'."""
+        """'28/07/2026' oder '28.07.2026' (DD/MM/YYYY) → '2026-07-28'."""
         try:
-            day, month, year = date_text.split("/")
+            day, month, year = re.split(r"[/.]", date_text)
             return f"{year}-{month}-{day}"
         except Exception:
             return None
@@ -442,5 +464,11 @@ class HpinstantinkProvider(BaseProvider):
                 """
             )
             logger.info("DEBUG HP Instant Ink (%s): %s", context, texts)
+            logger.info("DEBUG HP Instant Ink URL: %s", page.url)
+            main_text = page.evaluate(
+                "() => (document.querySelector('main') || document.body)"
+                ".innerText.slice(0, 1500)"
+            )
+            logger.info("DEBUG HP Instant Ink Seiteninhalt:\n%s", main_text)
         except Exception as de:
             logger.debug("DEBUG-Dump fehlgeschlagen (%s): %s", context, de)
