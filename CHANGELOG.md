@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.14] - 2026-10-25
+
+### Fixed
+- Klarna: the scan only ever reached the ~20 most recent purchases. The new purchases-and-returns list loads older entries via infinite scroll, which we never triggered, and every `go_back()` from a detail page re-renders only the first batch, so clicking past index ~20 silently ended the scan. The list is now loaded all the way back (load-more buttons plus scrolling the window and any scrollable container) until several rounds bring no new entries, then reloaded up to the current index after each `go_back()`. The old hard cap of 100 entries was raised to 2000.
+- Klarna: the log now states whether the list was fully loaded, how many entries were found, and which entry is the oldest one, so it's easy to check that the scan really reached the start of the history.
+- Klarna: dates shown without a year (e.g. "5. Dezember") were always assigned to the current year, even when that put them in the future. They now roll back to the previous year, which matters now that the scan reaches further back.
+
+---
+
 ## [1.0.13] - 2026-09-07
 
 ### Fixed
