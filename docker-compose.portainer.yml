@@ -80,6 +80,9 @@ services:
       - AMAZON_START_YEAR=${AMAZON_START_YEAR:-2009}
       - AMAZON_INCREMENTAL=${AMAZON_INCREMENTAL:-false}
 
+      # Klarna
+      - KLARNA_FULL_SCAN=${KLARNA_FULL_SCAN:-false}
+
       # Scheduler & Upload
       - RUN_INTERVAL_HOURS=${RUN_INTERVAL_HOURS:-24}
       - RUN_ON_STARTUP=${RUN_ON_STARTUP:-true}

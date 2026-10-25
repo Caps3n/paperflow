@@ -79,6 +79,22 @@ def is_processed(provider: str, invoice_id: str) -> bool:
     return False
 
 
+def has_retryable(provider: str) -> bool:
+    """True wenn es Einträge gibt, die beim nächsten Lauf erneut versucht werden
+    (pending oder failed, außer dauerhaftem no_pdf)."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM invoices
+            WHERE provider=? AND status != 'uploaded'
+              AND NOT (status='failed' AND error_type='no_pdf')
+            LIMIT 1
+            """,
+            (provider,),
+        ).fetchone()
+    return row is not None
+
+
 def mark_pending(provider: str, invoice_id: str, filename: str) -> None:
     """Trägt eine neu gefundene Rechnung ein (Status: pending)."""
     now = datetime.utcnow().isoformat()

@@ -6,6 +6,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.16] - 2026-10-25
+
+### Changed
+- Klarna: since 1.0.15 the scan really reaches the full history (640+ entries in production). That made every run click through every purchase again. After the first complete history scan (end of the list reached, ≥ 90 % of clicks returned a transaction URL, all downloads attempted), a marker is stored. Later runs are incremental: they skip preloading the whole list, check only the newest entries, and stop after 15 already-processed transactions in a row.
+- Klarna: a full scan runs again automatically while any Klarna entry is pending or failed (except permanent `no_pdf`), when a year filter is set from the web UI, or when `KLARNA_FULL_SCAN=true` is set.
+- Klarna: progress is logged every 25 entries during the click-through scan.
+
+### Docs
+- README, `.env.example` and `docker-compose.portainer.yml`: `KLARNA_FULL_SCAN`, plus an explanation of the first full scan versus later incremental runs.
+
+---
+
 ## [1.0.15] - 2026-10-25
 
 ### Fixed
