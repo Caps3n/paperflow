@@ -2,7 +2,7 @@
 
 **Automatically fetch invoices from online providers and import them into [Paperless-NGX](https://github.com/paperless-ngx/paperless-ngx).**
 
-![Version](https://img.shields.io/badge/version-1.0.15-blue)
+![Version](https://img.shields.io/badge/version-1.0.16-blue)
 ![Status](https://img.shields.io/badge/status-pre--release-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)
@@ -67,6 +67,7 @@ Edit `.env`:
 | `AMAZON_MONTHS_BACK` | How many months back to scan | `12` |
 | `AMAZON_INCREMENTAL` | Only scan the last 30 days instead of full history | `false` |
 | `IKEA_MONTHS_BACK` | How many months back to scan | `12` |
+| `KLARNA_FULL_SCAN` | Force a full scan of the entire Klarna purchase history (normally only the first run does this) | `false` |
 | `CHROME_CDP_URL` | CDP endpoint of the `paperflow-chrome` container | set automatically in `docker-compose.yml` |
 | `UPLOAD_WORKERS` | Parallel upload threads | `3` |
 | `RUN_INTERVAL_HOURS` | How often to run (hours) | `24` |
@@ -100,12 +101,17 @@ Each provider can be limited to recent years via **Providers → Scan from year*
 
 Klarna's purchase list (`app.klarna.com/manage-payments/purchases-and-returns`) only shows the most recent ~20 purchases at first and loads older ones while scrolling. paperflow scrolls and clicks "load more" until several rounds in a row bring no new entries, so it reaches back to your very first Klarna purchase. Popups that lock the page (e.g. "Verfolge deine Lieferungen … / Später") are closed automatically. Pending payments ("Zahlung in Bearbeitung") are skipped and retried on the next run.
 
+The first scan opens every purchase once and can take a while with several hundred purchases. After it has gone through the whole history, later runs only check new purchases at the top of the list and stop after 15 already-processed purchases in a row. A full scan runs again automatically if any Klarna entry is still pending or failed (except "no PDF"), or when `KLARNA_FULL_SCAN=true` is set.
+
 To check that everything was loaded, look for these lines in **Logs**:
 
 ```
 Klarna: Liste vollständig geladen – 57 Einträge
 Klarna: Ältester geladener Eintrag: <date> · <shop> <time> <amount>
+Klarna: komplette Historie durchsucht (642 Einträge) – künftige Läufe prüfen nur noch neue Einträge
 ```
+
+Later runs log `inkrementeller Scan` instead.
 
 If the oldest entry is not your first Klarna purchase, or you see `Liste nach … Runden noch nicht am Ende` or `Seite ist weiterhin durch ein Popup gesperrt` instead, close any open popup once via noVNC and run again. If it persists, please open an issue with that log excerpt.
 

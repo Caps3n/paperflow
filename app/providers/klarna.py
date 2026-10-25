@@ -291,6 +291,19 @@ class KlarnaProvider(BaseProvider):
                     error_type="download_failed",
                 )
 
+        # Erst nach den Download-Versuchen markieren: jeder gesehene Eintrag hat
+        # jetzt einen DB-Eintrag. Fehlschläge (auch spätere Upload-Fehler)
+        # erzwingen über has_retryable() wieder einen vollständigen Scan.
+        if self._history_complete:
+            database.mark_year_complete(
+                self.provider_name, self._HISTORY_MARKER_YEAR, len(transactions)
+            )
+            logger.info(
+                "Klarna: komplette Historie durchsucht (%d Einträge) – künftige "
+                "Läufe prüfen nur noch neue Einträge",
+                len(transactions),
+            )
+
         logger.info("Klarna: %d Auszüge gefunden", len(invoices))
         return invoices
 
@@ -314,6 +327,33 @@ class KlarnaProvider(BaseProvider):
     _STABLE_ROUNDS = 4
     _MAX_TRANSACTIONS = 2000
     _useless_load_more: set[str] = set()
+    # Nach einem vollständigen Historien-Scan: so viele bereits verarbeitete
+    # Einträge in Folge → der Rest der (neueste-zuerst) Liste ist auch bekannt.
+    _KNOWN_STREAK_STOP = 15
+    # Markiert in scanned_years "komplette Historie einmal durchsucht"
+    _HISTORY_MARKER_YEAR = 0
+    _incremental = False
+    _history_complete = False
+
+    def _full_history_known(self) -> bool:
+        """True → inkrementeller Scan reicht (nur neue Einträge oben in der Liste)."""
+        if os.environ.get("KLARNA_FULL_SCAN", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            logger.info("Klarna: KLARNA_FULL_SCAN gesetzt – vollständiger Scan")
+            return False
+        if os.environ.get("PAPERFLOW_YEARS_FILTER", "").strip():
+            return False
+        if not database.is_year_complete(self.provider_name, self._HISTORY_MARKER_YEAR):
+            return False
+        if database.has_retryable(self.provider_name):
+            logger.info(
+                "Klarna: offene/fehlgeschlagene Einträge vorhanden – vollständiger Scan"
+            )
+            return False
+        return True
 
     def _count_list_items(self, page: Page) -> int:
         try:
@@ -536,17 +576,27 @@ class KlarnaProvider(BaseProvider):
         self._dismiss_overlays(page)
 
         self._useless_load_more = set()
-        total, complete = self._load_full_list(page)
-        if complete:
-            logger.info("Klarna: Liste vollständig geladen – %d Einträge", total)
-        else:
-            logger.warning(
-                "Klarna: Liste nach %d Runden noch nicht am Ende – %d Einträge "
-                "geladen, ältere fehlen evtl.",
-                self._MAX_LOAD_ROUNDS,
-                total,
+        self._history_complete = False
+        self._incremental = self._full_history_known()
+        if self._incremental:
+            logger.info(
+                "Klarna: Historie wurde bereits vollständig durchsucht – "
+                "inkrementeller Scan (stoppt nach %d bekannten Einträgen in Folge)",
+                self._KNOWN_STREAK_STOP,
             )
-        self._log_oldest_entry(page)
+        else:
+            total, complete = self._load_full_list(page)
+            if complete:
+                logger.info("Klarna: Liste vollständig geladen – %d Einträge", total)
+                self._history_complete = True
+            else:
+                logger.warning(
+                    "Klarna: Liste nach %d Runden noch nicht am Ende – %d Einträge "
+                    "geladen, ältere fehlen evtl.",
+                    self._MAX_LOAD_ROUNDS,
+                    total,
+                )
+            self._log_oldest_entry(page)
 
         transactions: list[dict] = []
         seen: set[str] = set()
@@ -654,6 +704,7 @@ class KlarnaProvider(BaseProvider):
         # daher werden Buttons bei jeder Iteration neu abgefragt.
         if not transactions:
             logger.info("Strategie 2b: pushState-Interceptor für Transaction-Buttons")
+            self._history_complete = False
             try:
                 self._install_pushstate_interceptor(page)
                 button_count = page.locator(self._TXN_BUTTON_SEL).count()
@@ -661,6 +712,8 @@ class KlarnaProvider(BaseProvider):
 
                 captured: list[str] = []
                 click_errors = 0
+                known_streak = 0
+                stopped_early = False
                 i = 0
                 while i < self._MAX_TRANSACTIONS:
                     self._dismiss_overlays(page)
@@ -683,6 +736,14 @@ class KlarnaProvider(BaseProvider):
                         if not urls and navigated:
                             urls = [page.url]
                         captured.extend(urls)
+                        if self._incremental and urls:
+                            t = self._parse_txn_from_href(urls[-1])
+                            if t and database.is_processed(
+                                self.provider_name, f"klarna_{t['id']}"
+                            ):
+                                known_streak += 1
+                            else:
+                                known_streak = 0
                         # Nur zurück, wenn der Klick wirklich zur Detailseite
                         # geführt hat – sonst landet go_back() auf der Startseite.
                         if urls or navigated:
@@ -711,11 +772,34 @@ class KlarnaProvider(BaseProvider):
                             pass
                         self._install_pushstate_interceptor(page)
                     i += 1
+                    if i % 25 == 0:
+                        logger.info(
+                            "Strategie 2b: %d Einträge durchsucht, %d URLs …",
+                            i,
+                            len(captured),
+                        )
+                    if known_streak >= self._KNOWN_STREAK_STOP:
+                        logger.info(
+                            "Klarna: %d bereits verarbeitete Einträge in Folge – "
+                            "ältere sind bekannt, beende Scan",
+                            known_streak,
+                        )
+                        stopped_early = True
+                        break
 
                 logger.info(
                     "Strategie 2b: %d Einträge durchsucht, %d URLs abgefangen",
                     i,
                     len(captured),
+                )
+                # Ende der Liste erreicht und (fast) jeder Klick hat eine URL
+                # geliefert → Historie gilt als vollständig durchsucht.
+                self._history_complete = (
+                    not self._incremental
+                    and not stopped_early
+                    and i < self._MAX_TRANSACTIONS
+                    and i > 0
+                    and len(captured) >= 0.9 * i
                 )
                 for url in captured:
                     txn = self._parse_txn_from_href(url)
