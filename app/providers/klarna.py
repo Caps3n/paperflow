@@ -334,6 +334,8 @@ class KlarnaProvider(BaseProvider):
     _HISTORY_MARKER_YEAR = 0
     _incremental = False
     _history_complete = False
+    _reloads = 0
+    _reload_secs = 0.0
 
     def _full_history_known(self) -> bool:
         """True → inkrementeller Scan reicht (nur neue Einträge oben in der Liste)."""
@@ -518,6 +520,59 @@ class KlarnaProvider(BaseProvider):
             logger.info("Klarna: Ältester geladener Eintrag: %s", text[:120])
         except Exception:
             pass
+
+    def _ensure_list_index(self, page: Page, idx: int) -> bool:
+        """Sorgt dafür, dass Listeneintrag idx gerendert ist (lädt ggf. nach)."""
+        self._dismiss_overlays(page)
+        btns = page.locator(self._TXN_BUTTON_SEL)
+        if btns.count() > idx:
+            return True
+        # Nach go_back() rendert Klarna teils nur die erste Seite neu →
+        # bis zum gewünschten Index nachladen.
+        t0 = time.time()
+        self._load_full_list(page, min_count=idx + 1)
+        self._reloads += 1
+        self._reload_secs += time.time() - t0
+        return btns.count() > idx
+
+    def _click_and_capture(self, page: Page, idx: int) -> list[str]:
+        """Klickt Eintrag idx, liefert die abgefangene Detail-URL(s) und geht zurück."""
+        btn = page.locator(self._TXN_BUTTON_SEL).nth(idx)
+        btn.scroll_into_view_if_needed(timeout=5_000)
+        btn.click(timeout=5_000)
+        _sleep(0.3, 0.6)
+        urls = page.evaluate("() => (window.__klarna_captured_urls || []).splice(0)")
+        navigated = "transactions/internal" in page.url
+        if not urls and navigated:
+            urls = [page.url]
+        # Nur zurück, wenn der Klick wirklich zur Detailseite geführt hat –
+        # sonst landet go_back() auf der Startseite.
+        if urls or navigated:
+            page.go_back()
+            try:
+                page.wait_for_selector(self._TXN_BUTTON_SEL, timeout=5_000)
+            except Exception:
+                pass
+            _sleep(0.5, 1.0)
+        return urls
+
+    def _ensure_on_list(self, page: Page) -> None:
+        if "purchases-and-returns" in page.url:
+            return
+        # Volle Navigation statt SPA-Zurück → Interceptor ist weg
+        page.goto(PURCHASES_LIST_URL, timeout=30_000)
+        try:
+            page.wait_for_selector(self._TXN_BUTTON_SEL, timeout=20_000)
+        except Exception:
+            pass
+        self._install_pushstate_interceptor(page)
+
+    def _entry_text(self, page: Page, idx: int) -> str:
+        try:
+            text = page.locator(self._TXN_BUTTON_SEL).nth(idx).inner_text(timeout=3_000)
+            return " · ".join(t.strip() for t in text.split("\n") if t.strip())[:80]
+        except Exception:
+            return "?"
 
     @staticmethod
     def _install_pushstate_interceptor(page: Page) -> None:
@@ -711,30 +766,17 @@ class KlarnaProvider(BaseProvider):
                 logger.info("Strategie 2b: %d €-Buttons gefunden", button_count)
 
                 captured: list[str] = []
-                click_errors = 0
+                failed: list[int] = []
                 known_streak = 0
                 stopped_early = False
+                self._reloads = 0
+                self._reload_secs = 0.0
                 i = 0
                 while i < self._MAX_TRANSACTIONS:
-                    self._dismiss_overlays(page)
-                    btns = page.locator(self._TXN_BUTTON_SEL)
-                    # Nach go_back() rendert Klarna oft nur die erste Seite neu →
-                    # bis zum aktuellen Index nachladen, sonst endet der Scan bei ~20.
-                    if btns.count() <= i:
-                        self._load_full_list(page, min_count=i + 1)
-                        if btns.count() <= i:
-                            break
+                    if not self._ensure_list_index(page, i):
+                        break
                     try:
-                        btn = btns.nth(i)
-                        btn.scroll_into_view_if_needed(timeout=5_000)
-                        btn.click(timeout=5_000)
-                        _sleep(0.3, 0.6)
-                        urls = page.evaluate(
-                            "() => (window.__klarna_captured_urls || []).splice(0)"
-                        )
-                        navigated = "transactions/internal" in page.url
-                        if not urls and navigated:
-                            urls = [page.url]
+                        urls = self._click_and_capture(page, i)
                         captured.extend(urls)
                         if self._incremental and urls:
                             t = self._parse_txn_from_href(urls[-1])
@@ -744,39 +786,25 @@ class KlarnaProvider(BaseProvider):
                                 known_streak += 1
                             else:
                                 known_streak = 0
-                        # Nur zurück, wenn der Klick wirklich zur Detailseite
-                        # geführt hat – sonst landet go_back() auf der Startseite.
-                        if urls or navigated:
-                            page.go_back()
-                            try:
-                                page.wait_for_selector(
-                                    self._TXN_BUTTON_SEL, timeout=5_000
-                                )
-                            except Exception:
-                                pass
-                            _sleep(0.5, 1.0)
                     except Exception as exc:
-                        click_errors += 1
-                        log = logger.warning if click_errors <= 3 else logger.debug
+                        failed.append(i)
+                        log = logger.warning if len(failed) <= 3 else logger.debug
                         log(
                             "Strategie 2b: Klick auf Eintrag %d fehlgeschlagen: %s",
                             i,
                             str(exc).splitlines()[0][:200],
                         )
-                    if "purchases-and-returns" not in page.url:
-                        # Volle Navigation statt SPA-Zurück → Interceptor ist weg
-                        page.goto(PURCHASES_LIST_URL, timeout=30_000)
-                        try:
-                            page.wait_for_selector(self._TXN_BUTTON_SEL, timeout=20_000)
-                        except Exception:
-                            pass
-                        self._install_pushstate_interceptor(page)
+                    self._ensure_on_list(page)
                     i += 1
                     if i % 25 == 0:
                         logger.info(
-                            "Strategie 2b: %d Einträge durchsucht, %d URLs …",
+                            "Strategie 2b: %d Einträge durchsucht, %d URLs, "
+                            "%d Fehlschläge (Liste %d× nachgeladen, %.0f s) …",
                             i,
                             len(captured),
+                            len(failed),
+                            self._reloads,
+                            self._reload_secs,
                         )
                     if known_streak >= self._KNOWN_STREAK_STOP:
                         logger.info(
@@ -786,6 +814,42 @@ class KlarnaProvider(BaseProvider):
                         )
                         stopped_early = True
                         break
+
+                # Fehlgeschlagene Klicks einmal wiederholen – nach dem vollständigen
+                # Scan prüfen spätere Läufe nur noch die neuesten Einträge, ein hier
+                # verpasster Eintrag würde sonst nie mehr gefunden.
+                if failed:
+                    logger.info(
+                        "Strategie 2b: wiederhole %d fehlgeschlagene Klicks",
+                        len(failed),
+                    )
+                    still_failed: list[int] = []
+                    for idx in failed:
+                        try:
+                            if not self._ensure_list_index(page, idx):
+                                raise RuntimeError("Eintrag nicht mehr in der Liste")
+                            page.keyboard.press("Escape")
+                            captured.extend(self._click_and_capture(page, idx))
+                        except Exception:
+                            still_failed.append(idx)
+                        self._ensure_on_list(page)
+                    logger.info(
+                        "Strategie 2b: %d von %d nachgeholt",
+                        len(failed) - len(still_failed),
+                        len(failed),
+                    )
+                    for idx in still_failed[:30]:
+                        logger.warning(
+                            "Klarna: Eintrag %d nicht erfasst: %s",
+                            idx,
+                            self._entry_text(page, idx),
+                        )
+                    if still_failed:
+                        logger.warning(
+                            "Klarna: %d Einträge nicht erfasst – ggf. später einmal "
+                            "mit KLARNA_FULL_SCAN=true erneut durchsuchen",
+                            len(still_failed),
+                        )
 
                 logger.info(
                     "Strategie 2b: %d Einträge durchsucht, %d URLs abgefangen",

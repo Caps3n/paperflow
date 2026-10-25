@@ -6,9 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [1.0.17] - 2026-10-25
+
+### Fixed
+- Klarna: during the first full history scan in production (1415 entries), a few clicks on list entries timed out. After the full scan, later runs only check the newest entries, so a missed entry would never have been found again. Failed clicks are now retried once at the end of the click-through, after pressing Escape and reloading the list up to that entry. Entries that still fail are logged with merchant, time and amount, with a hint to use `KLARNA_FULL_SCAN=true`.
 
 ### Changed
+- Klarna: the progress line every 25 entries now also shows the number of failed clicks and how often (and for how long) the list had to be reloaded after returning from a detail page, which is what makes long scans slow down.
+- Klarna: the click-through scan was split into smaller helpers (`_ensure_list_index`, `_click_and_capture`, `_ensure_on_list`). Behavior is unchanged apart from the retry.
 - `docker-compose.portainer.yml`: the `PAPERLESS_URL` fallback was a real LAN address. It is now the neutral `http://paperless:8000`, matching the README. Set `PAPERLESS_URL` in Portainer's environment tab, or in the web UI settings, for your own instance.
 
 ---

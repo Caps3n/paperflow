@@ -2,7 +2,7 @@
 
 **Automatically fetch invoices from online providers and import them into [Paperless-NGX](https://github.com/paperless-ngx/paperless-ngx).**
 
-![Version](https://img.shields.io/badge/version-1.0.16-blue)
+![Version](https://img.shields.io/badge/version-1.0.17-blue)
 ![Status](https://img.shields.io/badge/status-pre--release-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)
@@ -111,7 +111,7 @@ Klarna: Ältester geladener Eintrag: <date> · <shop> <time> <amount>
 Klarna: komplette Historie durchsucht (642 Einträge) – künftige Läufe prüfen nur noch neue Einträge
 ```
 
-Later runs log `inkrementeller Scan` instead.
+Later runs log `inkrementeller Scan` instead. Clicks that fail during the scan are retried once at the end. Any entry that still could not be read is logged as `Klarna: Eintrag … nicht erfasst: <shop> · <time> · <amount>`.
 
 If the oldest entry is not your first Klarna purchase, or you see `Liste nach … Runden noch nicht am Ende` or `Seite ist weiterhin durch ein Popup gesperrt` instead, close any open popup once via noVNC and run again. If it persists, please open an issue with that log excerpt.
 
