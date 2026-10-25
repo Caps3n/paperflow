@@ -110,8 +110,12 @@ def _parse_klarna_date(text: str) -> tuple[int, int, int] | None:
         mon_key = m.group(2).lower()[:3].replace("ä", "a")
         month = _MONTHS_DE.get(mon_key)
         # Gruppe 3 enthält Jahr nur wenn es direkt hinter Monatsname steht
-        year = int(m.group(3)) if m.group(3) else datetime.date.today().year
+        today = datetime.date.today()
+        year = int(m.group(3)) if m.group(3) else today.year
         if month:
+            # Ohne Jahresangabe: ein Datum "in der Zukunft" stammt aus dem Vorjahr
+            if not m.group(3) and (month, day) > (today.month, today.day):
+                year -= 1
             return year, month, day
 
     # "DD.MM.YYYY"
@@ -298,8 +302,127 @@ class KlarnaProvider(BaseProvider):
         "button:has-text('Alle anzeigen')",
         "button:has-text('Load more')",
         "button:has-text('Show more')",
+        "button:has-text('Weitere anzeigen')",
+        "button:has-text('Weitere laden')",
+        "button:has-text('Ältere')",
         "[data-testid='load-more']",
     ]
+    _TXN_BUTTON_SEL = "button:has-text('€')"
+    _TXN_LINK_SEL = "a[href*='transactions/internal']"
+    _MAX_LOAD_ROUNDS = 150
+    # Runden ohne neuen Eintrag, bevor die Liste als vollständig gilt
+    _STABLE_ROUNDS = 4
+    _MAX_TRANSACTIONS = 2000
+
+    def _count_list_items(self, page: Page) -> int:
+        try:
+            return (
+                page.locator(self._TXN_BUTTON_SEL).count()
+                + page.locator(self._TXN_LINK_SEL).count()
+            )
+        except Exception:
+            return 0
+
+    def _click_load_more(self, page: Page) -> bool:
+        for sel in self._LOAD_MORE_SELECTORS:
+            try:
+                btn = page.query_selector(sel)
+                if btn and btn.is_visible():
+                    logger.info("Klicke 'Mehr laden' (%s)", sel)
+                    btn.scroll_into_view_if_needed()
+                    btn.click()
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _scroll_to_end(self, page: Page) -> None:
+        """Scrollt Fenster und alle scrollbaren Container ans Ende (Infinite Scroll)."""
+        try:
+            last = page.locator(f"{self._TXN_BUTTON_SEL}, {self._TXN_LINK_SEL}").last
+            last.scroll_into_view_if_needed(timeout=3_000)
+        except Exception:
+            pass
+        try:
+            page.evaluate("""
+                () => {
+                    window.scrollTo(0, document.body.scrollHeight);
+                    document.querySelectorAll('*').forEach(el => {
+                        if (el.scrollHeight > el.clientHeight + 50) {
+                            const oy = getComputedStyle(el).overflowY;
+                            if (oy === 'auto' || oy === 'scroll') {
+                                el.scrollTop = el.scrollHeight;
+                            }
+                        }
+                    });
+                }
+            """)
+            page.mouse.wheel(0, 4000)
+        except Exception:
+            pass
+
+    def _load_full_list(
+        self, page: Page, min_count: int | None = None
+    ) -> tuple[int, bool]:
+        """
+        Lädt die Käufe-Liste so weit nach hinten wie möglich ("Mehr laden" +
+        Infinite Scroll), bis mehrere Runden lang kein neuer Eintrag kommt.
+        Mit min_count wird abgebrochen, sobald so viele Einträge da sind.
+        Gibt (Anzahl, Ende erreicht) zurück.
+        """
+        count = self._count_list_items(page)
+        stable = 0
+        for _ in range(self._MAX_LOAD_ROUNDS):
+            if min_count is not None and count >= min_count:
+                return count, False
+            if not self._click_load_more(page):
+                self._scroll_to_end(page)
+            _sleep(1.0, 1.8)
+            try:
+                page.wait_for_load_state("networkidle", timeout=5_000)
+            except Exception:
+                pass
+            new_count = self._count_list_items(page)
+            if new_count > count:
+                if min_count is None:
+                    logger.info("Klarna: %d Einträge geladen …", new_count)
+                count = new_count
+                stable = 0
+            else:
+                stable += 1
+                if stable >= self._STABLE_ROUNDS:
+                    return count, True
+        return count, False
+
+    def _log_oldest_entry(self, page: Page) -> None:
+        """Loggt den letzten (ältesten) Listeneintrag zur Kontrolle."""
+        try:
+            last = page.locator(f"{self._TXN_BUTTON_SEL}, {self._TXN_LINK_SEL}").last
+            text = " · ".join(
+                t.strip()
+                for t in last.inner_text(timeout=3_000).split("\n")
+                if t.strip()
+            )
+            logger.info("Klarna: Ältester geladener Eintrag: %s", text[:120])
+        except Exception:
+            pass
+
+    @staticmethod
+    def _install_pushstate_interceptor(page: Page) -> None:
+        page.evaluate("""
+            () => {
+                if (window.__klarna_interceptor_active) return;
+                window.__klarna_captured_urls = [];
+                window.__klarna_interceptor_active = true;
+                const orig = history.pushState.bind(history);
+                history.pushState = (s, t, url) => {
+                    if (url && String(url).includes('transactions/internal')) {
+                        window.__klarna_captured_urls.push(String(url));
+                    }
+                    orig(s, t, url);
+                };
+            }
+        """)
 
     def _parse_transactions(self, page: Page) -> list[dict]:
         """
@@ -339,23 +462,17 @@ class KlarnaProvider(BaseProvider):
                 continue
         _sleep(2, 3)
 
-        # "Mehr laden" solange klicken bis Button weg
-        for _ in range(20):
-            clicked = False
-            for sel in self._LOAD_MORE_SELECTORS:
-                try:
-                    btn = page.query_selector(sel)
-                    if btn and btn.is_visible():
-                        logger.info("Klicke 'Mehr laden' (%s)", sel)
-                        btn.scroll_into_view_if_needed()
-                        btn.click()
-                        _sleep(2, 3)
-                        clicked = True
-                        break
-                except Exception:
-                    continue
-            if not clicked:
-                break
+        total, complete = self._load_full_list(page)
+        if complete:
+            logger.info("Klarna: Liste vollständig geladen – %d Einträge", total)
+        else:
+            logger.warning(
+                "Klarna: Liste nach %d Runden noch nicht am Ende – %d Einträge "
+                "geladen, ältere fehlen evtl.",
+                self._MAX_LOAD_ROUNDS,
+                total,
+            )
+        self._log_oldest_entry(page)
 
         transactions: list[dict] = []
         seen: set[str] = set()
@@ -464,48 +581,56 @@ class KlarnaProvider(BaseProvider):
         if not transactions:
             logger.info("Strategie 2b: pushState-Interceptor für Transaction-Buttons")
             try:
-                # pushState patchen
-                page.evaluate("""
-                    () => {
-                        window.__klarna_captured_urls = [];
-                        window.__klarna_interceptor_active = true;
-                        const orig = history.pushState.bind(history);
-                        history.pushState = (s, t, url) => {
-                            if (url && url.includes('transactions/internal')) {
-                                window.__klarna_captured_urls.push(url);
-                            }
-                            orig(s, t, url);
-                        };
-                    }
-                """)
-                # Anzahl der Buttons einmalig bestimmen
-                button_count = len(page.query_selector_all("button:has-text('€')"))
+                self._install_pushstate_interceptor(page)
+                button_count = page.locator(self._TXN_BUTTON_SEL).count()
                 logger.info("Strategie 2b: %d €-Buttons gefunden", button_count)
 
-                for i in range(min(button_count, 100)):
-                    try:
-                        # Buttons bei jeder Iteration neu abfragen – Handles werden
-                        # nach go_back() ungültig da React den DOM neu aufbaut
-                        btns = page.query_selector_all("button:has-text('€')")
-                        if i >= len(btns):
+                captured: list[str] = []
+                i = 0
+                while i < self._MAX_TRANSACTIONS:
+                    btns = page.locator(self._TXN_BUTTON_SEL)
+                    # Nach go_back() rendert Klarna oft nur die erste Seite neu →
+                    # bis zum aktuellen Index nachladen, sonst endet der Scan bei ~20.
+                    if btns.count() <= i:
+                        self._load_full_list(page, min_count=i + 1)
+                        if btns.count() <= i:
                             break
-                        btns[i].click()
+                    try:
+                        btn = btns.nth(i)
+                        btn.scroll_into_view_if_needed(timeout=5_000)
+                        btn.click(timeout=5_000)
                         _sleep(0.3, 0.6)
+                        urls = page.evaluate(
+                            "() => (window.__klarna_captured_urls || []).splice(0)"
+                        )
+                        if not urls and "transactions/internal" in page.url:
+                            urls = [page.url]
+                        captured.extend(urls)
                         page.go_back()
-                        # Warten bis React die Liste neu gerendert hat
                         try:
-                            page.wait_for_selector(
-                                "button:has-text('€')", timeout=5_000
-                            )
+                            page.wait_for_selector(self._TXN_BUTTON_SEL, timeout=5_000)
                         except Exception:
                             pass
                         _sleep(0.5, 1.0)
-                    except Exception:
-                        continue
+                    except Exception as exc:
+                        logger.debug(
+                            "Strategie 2b: Eintrag %d fehlgeschlagen: %s", i, exc
+                        )
+                    if "purchases-and-returns" not in page.url:
+                        # Volle Navigation statt SPA-Zurück → Interceptor ist weg
+                        page.goto(PURCHASES_LIST_URL, timeout=30_000)
+                        try:
+                            page.wait_for_selector(self._TXN_BUTTON_SEL, timeout=20_000)
+                        except Exception:
+                            pass
+                        self._install_pushstate_interceptor(page)
+                    i += 1
 
-                # Abgefangene URLs auslesen
-                captured = page.evaluate("() => window.__klarna_captured_urls || []")
-                logger.info("Strategie 2b: %d URLs abgefangen", len(captured))
+                logger.info(
+                    "Strategie 2b: %d Einträge durchsucht, %d URLs abgefangen",
+                    i,
+                    len(captured),
+                )
                 for url in captured:
                     txn = self._parse_txn_from_href(url)
                     if txn and txn["id"] not in seen:
