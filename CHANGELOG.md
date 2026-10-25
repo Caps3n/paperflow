@@ -6,6 +6,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.15] - 2026-10-25
+
+### Fixed
+- Klarna: a "Verfolge deine Lieferungen … E-Mail-Adresse verknüpfen / Später" popup now locks the purchases page (`body[data-scroll-lock]`) and swallows every click. In production all 20 detail clicks timed out, no transaction URLs were captured, and the scan found 0 purchases. Such popups are now closed (exact-text "Später"/"Nicht jetzt" or a close button, then Escape) before loading the list and before every click. If the page stays locked, a warning says so.
+- Klarna: an unrelated "Mehr anzeigen" button matched the load-more selectors. Because a successful click replaced scrolling, the list never scrolled at all and was reported as "fully loaded" at 20 entries. The scan now always scrolls as well, and stops clicking a load-more button for the rest of the run once it has failed to bring new entries.
+- Klarna: `go_back()` now runs only when a click actually opened a detail page. Before, a click that went nowhere sent the browser back to the Klarna start page.
+- Klarna: failed clicks are logged as warnings with their reason (first 3), not hidden at debug level.
+- HP Instant Ink: HP removed the collapsible "Druck- und Zahlungsverlauf" section; the history is now its own page behind the menu link. If no table is visible, the provider clicks the accordion button or, failing that, the menu link, and waits up to 20 s for the "Herunterladen" links. Dates in `DD.MM.YYYY` format are accepted alongside `DD/MM/YYYY`.
+
+### Changed
+- Klarna: the "Ältester geladener Eintrag" log line now includes the date group heading, since the entries themselves only show the time.
+- HP Instant Ink: the debug dump also logs the page URL and the first 1500 characters of the page text, so layout changes can be diagnosed from one log.
+
+---
+
 ## [1.0.14] - 2026-10-25
 
 ### Fixed

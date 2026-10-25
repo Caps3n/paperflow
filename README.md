@@ -2,7 +2,7 @@
 
 **Automatically fetch invoices from online providers and import them into [Paperless-NGX](https://github.com/paperless-ngx/paperless-ngx).**
 
-![Version](https://img.shields.io/badge/version-1.0.14-blue)
+![Version](https://img.shields.io/badge/version-1.0.15-blue)
 ![Status](https://img.shields.io/badge/status-pre--release-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)
@@ -91,23 +91,23 @@ On first run, open the browser at **http://localhost:6080** (noVNC), log into Am
 | **Amazon** | Order invoices (PDF) | Scans by year; `AMAZON_MONTHS_BACK` / `AMAZON_INCREMENTAL` limit the range |
 | **IKEA** | In-store and online receipts (PDF, older ones as JPG) | `IKEA_MONTHS_BACK` limits the range |
 | **Klarna** | Purchase statements ("Auszug herunterladen") | Loads the **entire** purchase history (see below) |
-| **HP Instant Ink** | Individual monthly invoices from the print/payment history | Walks all history pages |
+| **HP Instant Ink** | Individual monthly invoices from the print/payment history ("Druck- und Zahlungsverlauf") | Opens the history page via the menu and walks all pages |
 | ~~PayPal~~ | — | Not supported (step-up 2FA, see Roadmap) |
 
 Each provider can be limited to recent years via **Providers → Scan from year** in the web UI (empty = all years).
 
 ### Klarna: full history scan
 
-Klarna's purchase list (`app.klarna.com/manage-payments/purchases-and-returns`) only shows the most recent ~20 purchases at first and loads older ones while scrolling. paperflow scrolls and clicks "load more" until several rounds in a row bring no new entries, so it reaches back to your very first Klarna purchase. Pending payments ("Zahlung in Bearbeitung") are skipped and retried on the next run.
+Klarna's purchase list (`app.klarna.com/manage-payments/purchases-and-returns`) only shows the most recent ~20 purchases at first and loads older ones while scrolling. paperflow scrolls and clicks "load more" until several rounds in a row bring no new entries, so it reaches back to your very first Klarna purchase. Popups that lock the page (e.g. "Verfolge deine Lieferungen … / Später") are closed automatically. Pending payments ("Zahlung in Bearbeitung") are skipped and retried on the next run.
 
 To check that everything was loaded, look for these lines in **Logs**:
 
 ```
 Klarna: Liste vollständig geladen – 57 Einträge
-Klarna: Ältester geladener Eintrag: <shop> · <date> · <amount>
+Klarna: Ältester geladener Eintrag: <date> · <shop> <time> <amount>
 ```
 
-If the oldest entry is not your first Klarna purchase, or you see `Liste nach … Runden noch nicht am Ende` instead, please open an issue with that log excerpt.
+If the oldest entry is not your first Klarna purchase, or you see `Liste nach … Runden noch nicht am Ende` or `Seite ist weiterhin durch ein Popup gesperrt` instead, close any open popup once via noVNC and run again. If it persists, please open an issue with that log excerpt.
 
 ---
 
