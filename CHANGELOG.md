@@ -6,6 +6,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.18] - 2026-10-25
+
+### Added
+- New provider **Ollama** (`ollama`). It downloads the subscription invoices from https://ollama.com/settings/billing; the user logs in once via noVNC, as with the other CDP providers.
+  - It reads the "Invoices" table (Date / Due / Total / Status / View) and downloads only paid invoices. Open, draft and void invoices are retried on later runs.
+  - Each "View" link points to `/settings/billing/invoices/<n>/in_…`. That Stripe invoice ID becomes the paperflow invoice ID (`ollama_in_…`), so duplicates are detected reliably.
+  - The PDF is fetched from the invoice page: directly from Stripe if it links to a Stripe-hosted invoice, otherwise via a PDF link on the page, otherwise via the "Download invoice" button. If none of these work, a debug dump of the page's links and buttons is logged.
+  - The year filter and "Scan from year" are supported. Default tags are `Ollama`, `Rechnung` and the year; the default correspondent is `Ollama`.
+- Web UI: 🦙 icon for the Ollama provider.
+
+### Docs
+- README: Ollama added to features, supported providers, browser login, project structure and roadmap.
+
+---
+
 ## [1.0.17] - 2026-10-25
 
 ### Fixed
