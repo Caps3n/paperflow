@@ -13,6 +13,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Klarna: the log now states whether the list was fully loaded, how many entries were found, and which entry is the oldest one, so it's easy to check that the scan really reached the start of the history.
 - Klarna: dates shown without a year (e.g. "5. Dezember") were always assigned to the current year, even when that put them in the future. They now roll back to the previous year, which matters now that the scan reaches further back.
 
+### Docs
+- README: new "Supported Providers" section with an overview per provider, how Klarna's full-history scan works, and which log lines confirm that the whole history was loaded.
+- README: project structure now lists `hpinstantink.py`; the first-run login hint mentions all CDP providers, not just Amazon and IKEA.
+
 ---
 
 ## [1.0.13] - 2026-09-07

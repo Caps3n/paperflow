@@ -80,7 +80,34 @@ docker compose up -d
 
 Open the web interface at **http://localhost:8085**
 
-On first run, open the browser at **http://localhost:6080** (noVNC), log into Amazon or IKEA manually once — the session is then reused automatically.
+On first run, open the browser at **http://localhost:6080** (noVNC), log into Amazon, IKEA, Klarna, or HP Instant Ink manually once — the session is then reused automatically.
+
+---
+
+## 🧾 Supported Providers
+
+| Provider | What is downloaded | Notes |
+|---|---|---|
+| **Amazon** | Order invoices (PDF) | Scans by year; `AMAZON_MONTHS_BACK` / `AMAZON_INCREMENTAL` limit the range |
+| **IKEA** | In-store and online receipts (PDF, older ones as JPG) | `IKEA_MONTHS_BACK` limits the range |
+| **Klarna** | Purchase statements ("Auszug herunterladen") | Loads the **entire** purchase history (see below) |
+| **HP Instant Ink** | Individual monthly invoices from the print/payment history | Walks all history pages |
+| ~~PayPal~~ | — | Not supported (step-up 2FA, see Roadmap) |
+
+Each provider can be limited to recent years via **Providers → Scan from year** in the web UI (empty = all years).
+
+### Klarna: full history scan
+
+Klarna's purchase list (`app.klarna.com/manage-payments/purchases-and-returns`) only shows the most recent ~20 purchases at first and loads older ones while scrolling. paperflow scrolls and clicks "load more" until several rounds in a row bring no new entries, so it reaches back to your very first Klarna purchase. Pending payments ("Zahlung in Bearbeitung") are skipped and retried on the next run.
+
+To check that everything was loaded, look for these lines in **Logs**:
+
+```
+Klarna: Liste vollständig geladen – 57 Einträge
+Klarna: Ältester geladener Eintrag: <shop> · <date> · <amount>
+```
+
+If the oldest entry is not your first Klarna purchase, or you see `Liste nach … Runden noch nicht am Ende` instead, please open an issue with that log excerpt.
 
 ---
 
@@ -208,7 +235,8 @@ paperflow/
 │       ├── __init__.py      # BaseProvider + Invoice dataclass
 │       ├── amazon.py        # Amazon provider (CDP mode + fallback)
 │       ├── ikea.py          # IKEA provider (CDP mode + cookie import)
-│       └── klarna.py        # Klarna provider (CDP mode, Kaufbelege)
+│       ├── klarna.py        # Klarna provider (CDP mode, full purchase history)
+│       └── hpinstantink.py  # HP Instant Ink provider (CDP mode, monthly invoices)
 ├── chrome-desktop/          # Chrome + noVNC Docker image (paperflow-chrome)
 │   ├── Dockerfile
 │   └── start.sh
