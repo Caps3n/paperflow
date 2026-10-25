@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+- `docker-compose.portainer.yml`: the `PAPERLESS_URL` fallback was a real LAN address. It is now the neutral `http://paperless:8000`, matching the README. Set `PAPERLESS_URL` in Portainer's environment tab, or in the web UI settings, for your own instance.
+
+---
+
 ## [1.0.16] - 2026-10-25
 
 ### Changed

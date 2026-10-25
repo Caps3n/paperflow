@@ -70,7 +70,7 @@ services:
       - CHROME_CDP_URL=http://paperflow-chrome:9222
 
       # Paperless-NGX
-      - PAPERLESS_URL=${PAPERLESS_URL:-http://192.168.178.37:8777}
+      - PAPERLESS_URL=${PAPERLESS_URL:-http://paperless:8000}
       - PAPERLESS_TOKEN=${PAPERLESS_TOKEN}
 
       # Amazon
